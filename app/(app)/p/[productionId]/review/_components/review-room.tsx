@@ -4,7 +4,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   Keyboard,
@@ -67,6 +67,21 @@ export function ReviewRoom({
   const [hintsOpen, setHintsOpen] = useState(false);
   const [clappedId, setClappedId] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const clapTimerRef = useRef<number | null>(null);
+  const leaveTimerRef = useRef<number | null>(null);
+
+  // Clear pending pick timers on unmount so a fast Escape/navigation can't
+  // fire a stale router.push.
+  useEffect(() => {
+    return () => {
+      if (clapTimerRef.current !== null) {
+        window.clearTimeout(clapTimerRef.current);
+      }
+      if (leaveTimerRef.current !== null) {
+        window.clearTimeout(leaveTimerRef.current);
+      }
+    };
+  }, []);
 
   const count = versions?.length ?? 0;
   const focused: VersionCard | undefined =
@@ -166,8 +181,8 @@ export function ReviewRoom({
     toast.success(`v${version.index} picked`);
     setClappedId(version._id);
     setLeaving(true);
-    window.setTimeout(() => setClappedId(null), 300);
-    window.setTimeout(() => closeRoom(), 600);
+    clapTimerRef.current = window.setTimeout(() => setClappedId(null), 300);
+    leaveTimerRef.current = window.setTimeout(() => closeRoom(), 600);
   };
 
   const setCount = (n: 1 | 2 | 3 | 4) => {
@@ -197,7 +212,9 @@ export function ReviewRoom({
       "0": () => {
         if (!anyDialogOpen) setTransform(IDENTITY_TRANSFORM);
       },
-      "?": () => setHintsOpen(true),
+      "?": () => {
+        if (!anyDialogOpen) setHintsOpen(true);
+      },
       escape: () => {
         // Esc first exits fullscreen (the browser does that), then closes.
         if (anyDialogOpen || leaving || document.fullscreenElement) return;

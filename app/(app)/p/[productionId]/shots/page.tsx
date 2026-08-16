@@ -105,7 +105,15 @@ function ShotsScreen() {
 
   const canCreate = isContentEditor(role);
   const [newShotOpen, setNewShotOpen] = useState(false);
-  useHotkeys({ n: () => setNewShotOpen(true) }, canCreate);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  useHotkeys(
+    {
+      n: () => {
+        if (!bulkOpen) setNewShotOpen(true);
+      },
+    },
+    canCreate,
+  );
 
   const episodic = production?.kind === "episodic";
   const episodes = production?.episodes;
@@ -131,6 +139,8 @@ function ShotsScreen() {
                   scenes={scenes}
                   episodes={episodes}
                   episodic={episodic === true}
+                  open={bulkOpen}
+                  onOpenChange={setBulkOpen}
                 />
                 <Button
                   size="sm"

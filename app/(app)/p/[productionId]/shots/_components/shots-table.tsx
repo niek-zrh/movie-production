@@ -384,11 +384,11 @@ function DueDateCell({
         className="h-6 rounded-md border border-input bg-transparent px-1 font-mono text-xs outline-none focus-visible:border-ring"
         onChange={(e) => {
           const next = e.target.value;
-          if (next && next !== shot.dueDate) {
-            void updateShot({ shotId: shot._id, dueDate: next }).catch(
-              onMutationError,
-            );
-          }
+          if (next === (shot.dueDate ?? "")) return;
+          void updateShot({
+            shotId: shot._id,
+            dueDate: next === "" ? null : next,
+          }).catch(onMutationError);
         }}
         onBlur={() => setEditing(false)}
         onKeyDown={(e) => {

@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import {
@@ -53,11 +53,11 @@ export const create = mutation({
       "content.edit",
     );
     const code = args.code.trim().toUpperCase();
-    if (code.length === 0) throw new Error("Scene code is required");
+    if (code.length === 0) throw new ConvexError("Scene code is required");
     if (args.episodeId !== undefined) {
       const episode = await ctx.db.get(args.episodeId);
       if (!episode || episode.productionId !== args.productionId)
-        throw new Error("Episode not found in this production");
+        throw new ConvexError("Episode not found in this production");
     }
     const existing = await ctx.db
       .query("scenes")
@@ -98,7 +98,7 @@ export const update = mutation({
   },
   handler: async (ctx, args) => {
     const scene = await ctx.db.get(args.sceneId);
-    if (!scene) throw new Error("Scene not found");
+    if (!scene) throw new ConvexError("Scene not found");
     const { userId } = await assertCanForProduction(
       ctx,
       scene.productionId,
@@ -134,7 +134,7 @@ export const update = mutation({
     if (args.episodeId !== undefined && args.episodeId !== scene.episodeId) {
       const episode = await ctx.db.get(args.episodeId);
       if (!episode || episode.productionId !== scene.productionId)
-        throw new Error("Episode not found in this production");
+        throw new ConvexError("Episode not found in this production");
       patch.episodeId = args.episodeId;
       changes.push(`episode → EP${String(episode.number).padStart(2, "0")}`);
     }
@@ -166,7 +166,7 @@ export const remove = mutation({
       .withIndex("by_scene", (q) => q.eq("sceneId", scene._id))
       .first();
     if (referencingShot !== null)
-      throw new Error(
+      throw new ConvexError(
         "This scene still has shots — reassign or remove them first",
       );
     await ctx.db.delete(scene._id);

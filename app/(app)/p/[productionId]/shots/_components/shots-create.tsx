@@ -143,15 +143,18 @@ export function BulkCreateDialog({
   scenes,
   episodes,
   episodic,
+  open,
+  onOpenChange,
 }: {
   productionId: Id<"productions">;
   scenes: SceneRow[] | undefined;
   episodes: EpisodeRow[] | undefined;
   episodic: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger render={<Button variant="outline" size="sm" />}>
         <ClipboardList /> Paste codes
       </DialogTrigger>
@@ -168,7 +171,7 @@ export function BulkCreateDialog({
           scenes={scenes}
           episodes={episodes}
           episodic={episodic}
-          onDone={() => setOpen(false)}
+          onDone={() => onOpenChange(false)}
         />
       </DialogContent>
     </Dialog>

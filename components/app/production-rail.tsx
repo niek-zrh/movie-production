@@ -5,6 +5,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
 import {
   Columns3,
   FileText,
@@ -18,6 +19,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { copy } from "@/lib/copy";
+import { useStudio } from "@/components/app/studio-context";
 
 const TABS = [
   { href: "", label: copy.nav.overview, icon: LayoutDashboard, exact: true },
@@ -37,8 +39,22 @@ export function ProductionRail({
   productionId: Id<"productions">;
 }) {
   const pathname = usePathname();
+  const { role, studioId, setStudioId } = useStudio();
   const production = useQuery(api.productions.get, { productionId });
   const base = `/p/${productionId}`;
+
+  // Keep the active studio in sync with the production being viewed so
+  // role-gated UI derives from the production's own studio.
+  useEffect(() => {
+    if (production && production.studioId !== studioId) {
+      setStudioId(production.studioId);
+    }
+  }, [production, studioId, setStudioId]);
+
+  const canManage = role === "owner" || role === "producer";
+  const tabs = canManage
+    ? TABS
+    : TABS.filter((tab) => tab.href !== "/settings");
 
   return (
     <aside className="sticky top-12 flex h-[calc(100vh-3rem)] w-44 shrink-0 flex-col border-r bg-sidebar">
@@ -52,7 +68,7 @@ export function ProductionRail({
         </p>
       </div>
       <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
-        {TABS.map((tab) => {
+        {tabs.map((tab) => {
           const href = `${base}${tab.href}`;
           const active = tab.exact
             ? pathname === href

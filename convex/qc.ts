@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -188,8 +188,8 @@ export const addParameter = mutation({
     await assertCan(ctx, args.studioId, "studio.manage");
     const name = args.name.trim();
     const spec = args.spec.trim();
-    if (!name) throw new Error("Parameter name can't be empty");
-    if (!spec) throw new Error("Parameter spec can't be empty");
+    if (!name) throw new ConvexError("Parameter name can't be empty");
+    if (!spec) throw new ConvexError("Parameter spec can't be empty");
     const existing = await ctx.db
       .query("qcParameters")
       .withIndex("by_studio", (q) => q.eq("studioId", args.studioId))
@@ -221,17 +221,17 @@ export const updateParameter = mutation({
   },
   handler: async (ctx, args) => {
     const parameter = await ctx.db.get(args.parameterId);
-    if (!parameter) throw new Error("QC parameter not found");
+    if (!parameter) throw new ConvexError("QC parameter not found");
     await assertCan(ctx, parameter.studioId, "studio.manage");
     const patch: Partial<Doc<"qcParameters">> = {};
     if (args.name !== undefined) {
       const name = args.name.trim();
-      if (!name) throw new Error("Parameter name can't be empty");
+      if (!name) throw new ConvexError("Parameter name can't be empty");
       patch.name = name;
     }
     if (args.spec !== undefined) {
       const spec = args.spec.trim();
-      if (!spec) throw new Error("Parameter spec can't be empty");
+      if (!spec) throw new ConvexError("Parameter spec can't be empty");
       patch.spec = spec;
     }
     if (args.tolerance !== undefined) {
@@ -291,11 +291,11 @@ export const createRun = mutation({
       "qc.run",
     );
     const name = args.name.trim();
-    if (!name) throw new Error("Give the QC run a name");
+    if (!name) throw new ConvexError("Give the QC run a name");
     if (args.masterAssetId !== undefined) {
       const master = await ctx.db.get(args.masterAssetId);
       if (!master || master.productionId !== args.productionId)
-        throw new Error("Master asset not found in this production");
+        throw new ConvexError("Master asset not found in this production");
     }
     const parameters = (
       await ctx.db
@@ -304,7 +304,7 @@ export const createRun = mutation({
         .collect()
     ).filter((p) => p.archived !== true);
     if (parameters.length === 0)
-      throw new Error(
+      throw new ConvexError(
         "No QC parameters yet — seed the studio QC template first",
       );
     const qcRunId = await ctx.db.insert("qcRuns", {
@@ -367,7 +367,7 @@ export const getRun = query({
   args: { qcRunId: v.id("qcRuns") },
   handler: async (ctx, args) => {
     const run = await ctx.db.get(args.qcRunId);
-    if (!run) throw new Error("QC run not found");
+    if (!run) throw new ConvexError("QC run not found");
     await assertMemberForProduction(ctx, run.productionId);
     const master =
       run.masterAssetId !== undefined
@@ -407,9 +407,9 @@ export const setCheck = mutation({
   },
   handler: async (ctx, args) => {
     const check = await ctx.db.get(args.checkId);
-    if (!check) throw new Error("QC check not found");
+    if (!check) throw new ConvexError("QC check not found");
     const run = await ctx.db.get(check.qcRunId);
-    if (!run) throw new Error("QC run not found");
+    if (!run) throw new ConvexError("QC run not found");
     const { userId } = await assertCanForProduction(
       ctx,
       run.productionId,
@@ -426,23 +426,27 @@ export const setCheck = mutation({
     });
 
     // Recompute run status: any required fail → failed; all required pass →
-    // passed; else in_progress. (Reads below see the patch above.)
+    // passed (only when there is at least one required check — a run with
+    // zero required checks can never auto-pass); else in_progress. (Reads
+    // below see the patch above.)
     const checks = await ctx.db
       .query("qcChecks")
       .withIndex("by_run", (q) => q.eq("qcRunId", run._id))
       .collect();
+    let requiredTotal = 0;
     let requiredFails = 0;
     let allRequiredPass = true;
     for (const c of checks) {
       const parameter = await ctx.db.get(c.parameterId);
       if (parameter === null || !parameter.required) continue;
+      requiredTotal++;
       if (c.result === "fail") requiredFails++;
       if (c.result !== "pass") allRequiredPass = false;
     }
     const nextStatus: Doc<"qcRuns">["status"] =
       requiredFails > 0
         ? "failed"
-        : allRequiredPass
+        : requiredTotal > 0 && allRequiredPass
           ? "passed"
           : "in_progress";
 

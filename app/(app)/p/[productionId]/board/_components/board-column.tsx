@@ -210,7 +210,9 @@ export function BoardColumn({
                 className="h-6 w-auto gap-1 px-1.5 text-xs"
                 aria-label={`${stage.label} status`}
               >
-                <SelectValue />
+                <SelectValue>
+                  {STAGE_STATUS_BY_KEY[stage.status].label}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {STAGE_STATUS_OPTIONS.map((o) => (

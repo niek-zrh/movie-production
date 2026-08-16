@@ -187,8 +187,6 @@ function ImageSurface({
     pointerId: number;
     startX: number;
     startY: number;
-    tx: number;
-    ty: number;
     moved: boolean;
   } | null>(null);
 
@@ -203,8 +201,6 @@ function ImageSurface({
           pointerId: e.pointerId,
           startX: e.clientX,
           startY: e.clientY,
-          tx: transform.tx,
-          ty: transform.ty,
           moved: false,
         };
       }}
@@ -215,7 +211,11 @@ function ImageSurface({
         const dy = e.clientY - d.startY;
         if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true;
         if (!d.moved) return;
-        setTransform((t) => ({ ...t, tx: d.tx + dx, ty: d.ty + dy }));
+        // Rebase the drag origin and pan relative to the CURRENT transform,
+        // so a wheel-zoom mid-drag isn't clobbered by the next pointermove.
+        d.startX = e.clientX;
+        d.startY = e.clientY;
+        setTransform((t) => ({ ...t, tx: t.tx + dx, ty: t.ty + dy }));
       }}
       onPointerUp={(e) => {
         const d = drag.current;

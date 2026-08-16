@@ -24,7 +24,9 @@ export function registerDriveRoutes(http: HttpRouter) {
         });
 
       if (error || !code || !state) {
-        return redirect(`/drive/connected?status=error&reason=${error ?? "missing_code"}`);
+        return redirect(
+          `/drive/connected?status=error&reason=${encodeURIComponent(error ?? "missing_code")}`,
+        );
       }
 
       try {
@@ -32,9 +34,8 @@ export function registerDriveRoutes(http: HttpRouter) {
           internal.drive.completeConnection,
           { code, state },
         );
-        return redirect(
-          `${result.returnTo}?status=connected`,
-        );
+        const sep = result.returnTo.includes("?") ? "&" : "?";
+        return redirect(`${result.returnTo}${sep}status=connected`);
       } catch (e) {
         console.error("Drive connect failed", e);
         return redirect(`/drive/connected?status=error&reason=exchange_failed`);

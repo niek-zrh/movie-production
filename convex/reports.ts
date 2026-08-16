@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { formatInTimeZone } from "date-fns-tz";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
@@ -179,7 +179,7 @@ export const generateNow = mutation({
       today,
     );
     if (frozen) {
-      throw new Error("Today's report is already published and frozen");
+      throw new ConvexError("Today's report is already published and frozen");
     }
     return reportId;
   },
@@ -189,14 +189,14 @@ export const publish = mutation({
   args: { reportId: v.id("dailyReports") },
   handler: async (ctx, args) => {
     const report = await ctx.db.get(args.reportId);
-    if (!report) throw new Error("Report not found");
+    if (!report) throw new ConvexError("Report not found");
     const { userId, production } = await assertCanForProduction(
       ctx,
       report.productionId,
       "report.publish",
     );
     if (report.publishedBy !== undefined) {
-      throw new Error("This report is already published");
+      throw new ConvexError("This report is already published");
     }
     await ctx.db.patch(report._id, { publishedBy: userId });
 
@@ -246,7 +246,7 @@ export const get = query({
   args: { reportId: v.id("dailyReports") },
   handler: async (ctx, args) => {
     const report = await ctx.db.get(args.reportId);
-    if (!report) throw new Error("Report not found");
+    if (!report) throw new ConvexError("Report not found");
     const { production } = await assertMemberForProduction(
       ctx,
       report.productionId,

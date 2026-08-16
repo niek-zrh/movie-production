@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import {
   assertCanForProduction,
@@ -20,10 +20,10 @@ function validHttpUrl(raw: string): string {
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error("That doesn't look like a valid URL");
+    throw new ConvexError("That doesn't look like a valid URL");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-    throw new Error("Only http(s) links are allowed");
+    throw new ConvexError("Only http(s) links are allowed");
   return url;
 }
 
@@ -53,7 +53,7 @@ export const add = mutation({
   handler: async (ctx, args) => {
     await assertCanForProduction(ctx, args.productionId, "production.manage");
     const title = args.title.trim();
-    if (title.length === 0) throw new Error("Give the link a title");
+    if (title.length === 0) throw new ConvexError("Give the link a title");
     const url = validHttpUrl(args.url);
     return await ctx.db.insert("externalLinks", {
       productionId: args.productionId,
@@ -72,13 +72,13 @@ export const update = mutation({
   },
   handler: async (ctx, args) => {
     const link = await ctx.db.get(args.linkId);
-    if (!link) throw new Error("Link not found");
+    if (!link) throw new ConvexError("Link not found");
     await assertCanForProduction(ctx, link.productionId, "production.manage");
 
     let title: string | undefined;
     if (args.title !== undefined) {
       title = args.title.trim();
-      if (title.length === 0) throw new Error("Give the link a title");
+      if (title.length === 0) throw new ConvexError("Give the link a title");
     }
     const url = args.url !== undefined ? validHttpUrl(args.url) : undefined;
 

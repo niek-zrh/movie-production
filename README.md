@@ -132,6 +132,21 @@ npx convex run seed:run                 # optional
 `NEXT_PUBLIC_CONVEX_URL` + `NEXT_PUBLIC_CONVEX_SITE_URL` set, and update
 `SITE_URL` + the Google redirect URIs to the public URLs.
 
+## E2E smoke tests
+
+With `pnpm dev` running (and the seed applied):
+
+```bash
+SHOTS_DIR=/tmp/slate-shots node e2e/qa-flow.mjs    # full §13 demo: studio → wizard →
+                                                   # bulk shots → upload → review-room
+                                                   # keyboard pick → gates → report → QC
+QA_SIGNUP=1 SHOTS_DIR=/tmp/slate-shots node e2e/qa-aurora.mjs  # screenshot walk of every
+                                                   # seeded Aurora North screen
+```
+
+Each run creates throwaway users/studios in the local dev DB; multi-tenant
+isolation keeps them invisible to real accounts.
+
 ## Repo map
 
 ```

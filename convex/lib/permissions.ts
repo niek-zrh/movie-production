@@ -1,4 +1,5 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 
@@ -72,7 +73,9 @@ const ROLE_CAPS: Record<Role, Capability[]> = {
   viewer: ["comment.create"],
 };
 
-export class PermissionError extends Error {
+// Extends ConvexError so the message survives production redaction (plain
+// Error messages become "Server Error"; ConvexError data reaches the client).
+export class PermissionError extends ConvexError<string> {
   constructor(message: string) {
     super(message);
     this.name = "PermissionError";

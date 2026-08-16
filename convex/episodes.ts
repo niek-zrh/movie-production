@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import {
   assertCanForProduction,
@@ -34,7 +34,7 @@ export const create = mutation({
     );
 
     const number = Math.floor(args.number);
-    if (number < 1) throw new Error("Episode number must be 1 or higher");
+    if (number < 1) throw new ConvexError("Episode number must be 1 or higher");
     const siblings = await ctx.db
       .query("episodes")
       .withIndex("by_production", (q) =>
@@ -42,7 +42,7 @@ export const create = mutation({
       )
       .collect();
     if (siblings.some((e) => e.number === number))
-      throw new Error(`Episode ${number} already exists`);
+      throw new ConvexError(`Episode ${number} already exists`);
 
     const title = args.title?.trim() || undefined;
     const episodeId = await ctx.db.insert("episodes", {
@@ -71,7 +71,7 @@ export const update = mutation({
   },
   handler: async (ctx, args) => {
     const episode = await ctx.db.get(args.episodeId);
-    if (!episode) throw new Error("Episode not found");
+    if (!episode) throw new ConvexError("Episode not found");
     const { userId, production } = await assertCanForProduction(
       ctx,
       episode.productionId,

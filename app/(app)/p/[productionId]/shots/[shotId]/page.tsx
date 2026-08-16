@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
@@ -351,6 +351,7 @@ function InlineTitle({
 }) {
   const updateShot = useMutation(api.shots.update);
   const [value, setValue] = useState(title ?? "");
+  const cancelled = useRef(false);
   useEffect(() => {
     setValue(title ?? "");
   }, [title]);
@@ -362,6 +363,10 @@ function InlineTitle({
   }
 
   const commit = () => {
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
+    }
     const trimmed = value.trim();
     if (trimmed === (title ?? "")) return;
     void updateShot({ shotId, title: trimmed }).catch(showMutationError);
@@ -378,6 +383,7 @@ function InlineTitle({
       onKeyDown={(e) => {
         if (e.key === "Enter") e.currentTarget.blur();
         if (e.key === "Escape") {
+          cancelled.current = true;
           setValue(title ?? "");
           e.currentTarget.blur();
         }

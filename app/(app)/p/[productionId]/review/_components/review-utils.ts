@@ -1,4 +1,5 @@
 import type { api } from "@/convex/_generated/api";
+import { extensionFor } from "@/convex/lib/domain";
 
 /** Enriched version shape returned by api.versions.listForShot. */
 export type VersionCard = (typeof api.versions.listForShot._returnType)[number];
@@ -40,11 +41,7 @@ export function firstErrorLine(e: unknown): string {
 
 /** File extension for the canonical approved filename. */
 export function extensionOf(asset: VersionCard["asset"]): string {
-  const name = asset?.name ?? "";
-  const dot = name.lastIndexOf(".");
-  if (dot > 0 && dot < name.length - 1) return name.slice(dot + 1);
-  const sub = asset?.mimeType?.split("/")[1];
-  return sub !== undefined && sub !== "" ? sub : "png";
+  return extensionFor(asset?.name ?? "", asset?.mimeType);
 }
 
 export function isImageVersion(version: VersionCard): boolean {

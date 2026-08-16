@@ -135,6 +135,9 @@ export async function getFreshToken(
     connectionId,
     accessToken: data.access_token,
     expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000,
+    ...(data.refresh_token !== undefined
+      ? { refreshToken: data.refresh_token }
+      : {}),
   });
   return data.access_token;
 }
@@ -217,21 +220,22 @@ export async function createFolder(
 export async function listFiles(token: string, q: string): Promise<DriveFile[]> {
   const files: DriveFile[] = [];
   let pageToken: string | undefined;
-  for (let page = 0; page < 10; page++) {
+  let page = 0;
+  do {
     const data = await driveRequest<{
       files?: DriveFile[];
       nextPageToken?: string;
     }>(token, "/files", undefined, {
       q,
       fields: `nextPageToken,files(${FILE_FIELDS})`,
-      pageSize: "200",
+      pageSize: "1000",
       includeItemsFromAllDrives: "true",
       ...(pageToken !== undefined ? { pageToken } : {}),
     });
     files.push(...(data.files ?? []));
-    if (data.nextPageToken === undefined) break;
     pageToken = data.nextPageToken;
-  }
+    page++;
+  } while (pageToken !== undefined && page < 100);
   return files;
 }
 
@@ -248,8 +252,6 @@ export async function copyFile(
   );
 }
 
-const MULTIPART_BOUNDARY = "slate_multipart_boundary_4a91c7e0";
-
 /** files.create with media — multipart/related built by hand (spec §7.3). */
 export async function multipartUpload(
   token: string,
@@ -260,6 +262,7 @@ export async function multipartUpload(
     bytes: ArrayBuffer | Uint8Array;
   },
 ): Promise<DriveFile> {
+  const boundary = `slate_boundary_${crypto.randomUUID()}`;
   const metadata = JSON.stringify({
     name: args.name,
     mimeType: args.mimeType,
@@ -267,15 +270,15 @@ export async function multipartUpload(
   });
   const encoder = new TextEncoder();
   const head = encoder.encode(
-    `--${MULTIPART_BOUNDARY}\r\n` +
+    `--${boundary}\r\n` +
       `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
       `${metadata}\r\n` +
-      `--${MULTIPART_BOUNDARY}\r\n` +
+      `--${boundary}\r\n` +
       `Content-Type: ${args.mimeType}\r\n\r\n`,
   );
   const media =
     args.bytes instanceof Uint8Array ? args.bytes : new Uint8Array(args.bytes);
-  const tail = encoder.encode(`\r\n--${MULTIPART_BOUNDARY}--`);
+  const tail = encoder.encode(`\r\n--${boundary}--`);
   const body = new Uint8Array(head.length + media.length + tail.length);
   body.set(head, 0);
   body.set(media, head.length);
@@ -289,7 +292,7 @@ export async function multipartUpload(
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
-      "Content-Type": `multipart/related; boundary=${MULTIPART_BOUNDARY}`,
+      "Content-Type": `multipart/related; boundary=${boundary}`,
     },
     body,
   });

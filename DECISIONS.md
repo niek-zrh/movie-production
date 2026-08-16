@@ -49,6 +49,27 @@ Format: date — decision — why. Spec references are to the mega prompt
 - 2026-08-17 — **Parked (top post-pilot candidate): resource planning**, per
   spec §14.
 
+- 2026-08-17 — **Adversarial review round applied** (multi-agent find →
+  refute → fix): pick() now refuses to regress approved/final/delivered/
+  killed shots; @mentions are filtered to studio members and notification
+  hrefs validated against the production path (cross-studio injection
+  closed); QC runs with zero required checks can no longer auto-pass;
+  attach-to-shot refuses assets that already back a version; malformed URL
+  filter ids no longer crash the shots query; due dates are clearable;
+  Settings tab hidden for non-managers and the active studio auto-follows
+  the production being viewed; Drive lib hardened (random multipart
+  boundary, full pagination, refresh-token rotation, 10-min OAuth state
+  TTL, folder-creation compare-and-set); user-facing server errors use
+  `ConvexError` so messages survive production deployments' redaction.
+- 2026-08-17 — **E2E harness**: `e2e/qa-flow.mjs` runs the full §13 demo
+  (minus live Drive) headlessly via Playwright against the dev servers;
+  `e2e/qa-aurora.mjs` walks every seeded screen. QA users/studios created in
+  the local DB are invisible to real users (multi-tenant isolation).
+- 2026-08-17 — **Known limitation**: the seeded "yesterday" daily report has
+  fabricated stats and an empty full-day list — Convex `_creationTime`
+  cannot be backdated, so seeded activity is all "today" (which makes
+  "Generate now" demos rich instead).
+
 ## Post-pilot parking lot
 1. Resource planning / workload view (raised in discovery, spec §14).
 2. Telegram notification delivery via `lib/notify.ts` fan-out.

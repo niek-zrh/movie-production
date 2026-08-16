@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { formatInTimeZone } from "date-fns-tz";
 import { DEFAULT_TEMPLATE } from "./qc";
+import { role as roleValidator } from "./schema";
 
 /**
  * Idempotent demo seed (spec §12): studio Aurora North, production SIGNAL
@@ -124,6 +125,30 @@ const SCENES = [
   { code: "SC120", ep: 2, title: "Server basement", figma: true },
   { code: "SC130", ep: 2, title: "Broadcast tower", figma: false },
 ];
+
+/** Dev/QA helper: add an extra pending invite to Aurora North. */
+export const addQaInvite = internalMutation({
+  args: { email: v.string(), role: roleValidator },
+  handler: async (ctx, args) => {
+    const studio = await ctx.db
+      .query("studios")
+      .withIndex("by_slug", (q) => q.eq("slug", "aurora-north"))
+      .unique();
+    if (!studio) throw new Error("Seed first");
+    const email = args.email.toLowerCase();
+    const existing = await ctx.db
+      .query("memberships")
+      .withIndex("by_invited_email", (q) => q.eq("invitedEmail", email))
+      .collect();
+    if (existing.some((m) => m.studioId === studio._id)) return;
+    await ctx.db.insert("memberships", {
+      studioId: studio._id,
+      role: args.role,
+      craftTitle: "QA",
+      invitedEmail: email,
+    });
+  },
+});
 
 export const alreadySeeded = internalQuery({
   args: {},

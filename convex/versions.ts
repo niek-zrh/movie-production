@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Infer } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
@@ -127,7 +127,7 @@ export async function createVersionWithAssetHelper(
   },
 ): Promise<{ versionId: Id<"versions">; index: number }> {
   const shot = await ctx.db.get(args.shotId);
-  if (!shot) throw new Error("Shot not found");
+  if (!shot) throw new ConvexError("Shot not found");
 
   const siblings = await ctx.db
     .query("versions")
@@ -139,11 +139,11 @@ export async function createVersionWithAssetHelper(
   let assetName: string;
   if ("existingAssetId" in args.asset) {
     const existing = await ctx.db.get(args.asset.existingAssetId);
-    if (!existing) throw new Error("Asset not found");
+    if (!existing) throw new ConvexError("Asset not found");
     if (existing.productionId !== shot.productionId)
-      throw new Error("Asset and shot belong to different productions");
+      throw new ConvexError("Asset and shot belong to different productions");
     if (existing.versionId !== undefined)
-      throw new Error("This asset already backs a version");
+      throw new ConvexError("This asset already backs a version");
     assetId = existing._id;
     assetName = existing.name;
   } else {
@@ -238,7 +238,7 @@ export const listForShot = query({
   args: { shotId: v.id("shots") },
   handler: async (ctx, args): Promise<VersionCard[]> => {
     const shot = await ctx.db.get(args.shotId);
-    if (!shot) throw new Error("Shot not found");
+    if (!shot) throw new ConvexError("Shot not found");
     await assertMemberForProduction(ctx, shot.productionId);
     const versions = await ctx.db
       .query("versions")
@@ -289,7 +289,7 @@ export const addFromUpload = mutation({
   },
   handler: async (ctx, args) => {
     const shot = await ctx.db.get(args.shotId);
-    if (!shot) throw new Error("Shot not found");
+    if (!shot) throw new ConvexError("Shot not found");
     const { userId, production } = await assertCanForProduction(
       ctx,
       shot.productionId,
@@ -337,9 +337,9 @@ async function requireDecision(
   member: Doc<"memberships">;
 }> {
   const version = await ctx.db.get(versionId);
-  if (!version) throw new Error("Version not found");
+  if (!version) throw new ConvexError("Version not found");
   const shot = await ctx.db.get(version.shotId);
-  if (!shot) throw new Error("Shot not found");
+  if (!shot) throw new ConvexError("Shot not found");
   const { userId, member, production } = await assertMemberForProduction(
     ctx,
     version.productionId,
@@ -360,7 +360,7 @@ export const shortlist = mutation({
       args.versionId,
     );
     if (version.status !== "candidate" && version.status !== "shortlisted") {
-      throw new Error(`Can't shortlist a ${version.status} version`);
+      throw new ConvexError(`Can't shortlist a ${version.status} version`);
     }
     const next =
       version.status === "candidate" ? "shortlisted" : "candidate";
@@ -389,12 +389,12 @@ export const reject = mutation({
       args.versionId,
     );
     if (version.status === "picked") {
-      throw new Error(
+      throw new ConvexError(
         "This version is picked — pick a different version to supersede it",
       );
     }
     if (version.status === "rejected") {
-      throw new Error("This version is already rejected");
+      throw new ConvexError("This version is already rejected");
     }
     await ctx.db.patch(version._id, {
       status: "rejected",
@@ -425,7 +425,7 @@ export const unreject = mutation({
       args.versionId,
     );
     if (version.status !== "rejected") {
-      throw new Error("Only rejected versions can be restored");
+      throw new ConvexError("Only rejected versions can be restored");
     }
     // A rejection caused by a standing pick can't be quietly undone.
     if (
@@ -433,7 +433,7 @@ export const unreject = mutation({
       version.decisionNote !== undefined &&
       version.decisionNote.startsWith("superseded by")
     ) {
-      throw new Error(
+      throw new ConvexError(
         "This version was superseded by the current pick",
       );
     }
@@ -469,7 +469,19 @@ export const pick = mutation({
       args.versionId,
     );
     if (version.status === "picked") {
-      throw new Error(`v${version.index} is already picked`);
+      throw new ConvexError(`v${version.index} is already picked`);
+    }
+    // Picks only happen while the shot is still in play — locked statuses
+    // (approved and beyond, or killed) must be reopened first.
+    if (
+      shot.status === "approved" ||
+      shot.status === "final" ||
+      shot.status === "delivered" ||
+      shot.status === "killed"
+    ) {
+      throw new ConvexError(
+        `This shot is already ${shot.status} — reopen it (set an earlier status) before re-picking`,
+      );
     }
     const now = Date.now();
 
@@ -558,9 +570,9 @@ export const updateMeta = mutation({
   },
   handler: async (ctx, args) => {
     const version = await ctx.db.get(args.versionId);
-    if (!version) throw new Error("Version not found");
+    if (!version) throw new ConvexError("Version not found");
     const shot = await ctx.db.get(version.shotId);
-    if (!shot) throw new Error("Shot not found");
+    if (!shot) throw new ConvexError("Shot not found");
     const { userId, member } = await assertMemberForProduction(
       ctx,
       version.productionId,

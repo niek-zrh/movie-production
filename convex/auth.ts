@@ -1,6 +1,7 @@
 import Google from "@auth/core/providers/google";
 import { Password } from "@convex-dev/auth/providers/Password";
 import { convexAuth } from "@convex-dev/auth/server";
+import { claimInvitesForUser } from "./studios";
 
 /**
  * Sign-in identity only (openid email profile). The Drive connection is a
@@ -26,7 +27,6 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
     async afterUserCreatedOrUpdated(ctx, { userId }) {
       // Invites are membership rows carrying invitedEmail; claim them on
       // every sign-in so joining a studio is automatic (spec F1).
-      const { claimInvitesForUser } = await import("./studios");
       await claimInvitesForUser(ctx, userId);
     },
   },

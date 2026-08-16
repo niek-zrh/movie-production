@@ -1,10 +1,11 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import {
   assertCanForProduction,
   assertMemberForProduction,
+  getMembership,
   PermissionError,
   roleHas,
 } from "./lib/permissions";
@@ -181,23 +182,33 @@ export const add = mutation({
     hrefHint: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { userId } = await assertCanForProduction(
+    const { userId, production } = await assertCanForProduction(
       ctx,
       args.productionId,
       "comment.create",
     );
     const body = args.body.trim();
-    if (!body) throw new Error("Comment can't be empty");
+    if (!body) throw new ConvexError("Comment can't be empty");
     const resolved = await resolveCommentTarget(
       ctx,
       args.targetType,
       args.targetId,
     );
     if (resolved && resolved.productionId !== args.productionId) {
-      throw new Error("Target does not belong to this production");
+      throw new ConvexError("Target does not belong to this production");
     }
 
-    const mentions = [...new Set(args.mentions)];
+    // Only studio members can be mentioned — silently drop everyone else
+    // before storing and notifying.
+    const mentions: Id<"users">[] = [];
+    for (const mentionId of [...new Set(args.mentions)]) {
+      const membership = await getMembership(
+        ctx,
+        production.studioId,
+        mentionId,
+      );
+      if (membership) mentions.push(mentionId);
+    }
     const commentId = await ctx.db.insert("comments", {
       productionId: args.productionId,
       targetType: args.targetType,
@@ -208,8 +219,14 @@ export const add = mutation({
     });
 
     const name = await actorName(ctx, userId);
+    // Only honor hrefHint when it points inside this production's pages.
+    const hrefHint =
+      args.hrefHint !== undefined &&
+      args.hrefHint.startsWith(`/p/${args.productionId}/`)
+        ? args.hrefHint
+        : undefined;
     const href =
-      args.hrefHint ??
+      hrefHint ??
       resolved?.href ??
       fallbackHref(args.productionId, args.targetType, args.targetId);
     await notifyMany(ctx, mentions, {
@@ -238,7 +255,7 @@ export const resolve = mutation({
   args: { commentId: v.id("comments") },
   handler: async (ctx, args) => {
     const comment = await ctx.db.get(args.commentId);
-    if (!comment) throw new Error("Comment not found");
+    if (!comment) throw new ConvexError("Comment not found");
     const { userId, member } = await assertMemberForProduction(
       ctx,
       comment.productionId,

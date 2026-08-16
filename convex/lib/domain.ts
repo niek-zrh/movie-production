@@ -137,6 +137,27 @@ export const WORKING_STATUSES: ShotStatusKey[] = [
   "rework",
 ];
 
+const EXT_BY_MIME: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+  "video/webm": "webm",
+  "audio/wav": "wav",
+  "audio/mpeg": "mp3",
+  "application/pdf": "pdf",
+};
+
+/** File extension from a name, falling back to the mime type, then "bin". */
+export function extensionFor(name: string, mimeType?: string): string {
+  const dot = name.lastIndexOf(".");
+  if (dot > 0 && dot < name.length - 1) return name.slice(dot + 1).toLowerCase();
+  const fromMime = mimeType !== undefined ? EXT_BY_MIME[mimeType] : undefined;
+  return fromMime ?? "bin";
+}
+
 /** Canonical approved filename (spec §7.4): SGL_EP01_SC010_SH020_v3.png */
 export function canonicalApprovedName(args: {
   productionCode: string;

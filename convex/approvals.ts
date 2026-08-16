@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -81,7 +81,7 @@ export const requestGateSignoff = mutation({
   args: { stageInstanceId: v.id("stageInstances") },
   handler: async (ctx, args) => {
     const stageInstance = await ctx.db.get(args.stageInstanceId);
-    if (!stageInstance) throw new Error("Stage not found");
+    if (!stageInstance) throw new ConvexError("Stage not found");
     const { userId, member, production } = await assertMemberForProduction(
       ctx,
       stageInstance.productionId,
@@ -95,7 +95,7 @@ export const requestGateSignoff = mutation({
       );
     }
     if (stageInstance.gateApproverIds.length === 0) {
-      throw new Error("Set gate approvers in production settings first");
+      throw new ConvexError("Set gate approvers in production settings first");
     }
 
     await ctx.db.patch(stageInstance._id, { gateStatus: "requested" });
@@ -150,7 +150,7 @@ export const decideGate = mutation({
   },
   handler: async (ctx, args) => {
     const stageInstance = await ctx.db.get(args.stageInstanceId);
-    if (!stageInstance) throw new Error("Stage not found");
+    if (!stageInstance) throw new ConvexError("Stage not found");
     const { userId, member, production } = await assertMemberForProduction(
       ctx,
       stageInstance.productionId,
@@ -160,7 +160,7 @@ export const decideGate = mutation({
     }
     const note = args.note?.trim() ? args.note.trim() : undefined;
     if (args.decision === "rejected" && note === undefined) {
-      throw new Error("A note is required when rejecting a gate");
+      throw new ConvexError("A note is required when rejecting a gate");
     }
 
     const now = Date.now();

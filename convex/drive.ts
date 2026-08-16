@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { makeFunctionReference } from "convex/server";
 import {
   action,
@@ -17,7 +17,11 @@ import {
   requireUserId,
 } from "./lib/permissions";
 import { actorName, logActivity } from "./lib/activity";
-import { canonicalApprovedName, HUB_FOLDERS } from "./lib/domain";
+import {
+  canonicalApprovedName,
+  extensionFor,
+  HUB_FOLDERS,
+} from "./lib/domain";
 import {
   aboutUser,
   CONFIG_ERROR,
@@ -106,7 +110,7 @@ async function freshTokenOrClean(
     return await getFreshToken(ctx, connectionId);
   } catch (e) {
     if (e instanceof DriveAuthError) {
-      throw new Error("Drive connection expired — reconnect");
+      throw new ConvexError("Drive connection expired — reconnect");
     }
     throw e;
   }
@@ -116,26 +120,6 @@ function randomStateToken(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-const EXT_BY_MIME: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/webp": "webp",
-  "image/gif": "gif",
-  "video/mp4": "mp4",
-  "video/quicktime": "mov",
-  "video/webm": "webm",
-  "audio/wav": "wav",
-  "audio/mpeg": "mp3",
-  "application/pdf": "pdf",
-};
-
-function extensionFor(name: string, mimeType?: string): string {
-  const dot = name.lastIndexOf(".");
-  if (dot > 0 && dot < name.length - 1) return name.slice(dot + 1).toLowerCase();
-  const fromMime = mimeType !== undefined ? EXT_BY_MIME[mimeType] : undefined;
-  return fromMime ?? "bin";
 }
 
 // ===========================================================================
@@ -197,7 +181,7 @@ export const beginConnect = mutation({
   handler: async (ctx, args): Promise<{ url: string }> => {
     const userId = await requireUserId(ctx);
     const env = googleEnv();
-    if (!env) throw new Error(CONFIG_ERROR);
+    if (!env) throw new ConvexError(CONFIG_ERROR);
     if (!args.returnTo.startsWith("/")) {
       throw new Error("returnTo must be an app path like /p/…/settings");
     }
@@ -259,10 +243,10 @@ export const scaffoldHub = action({
       productionId: args.productionId,
     });
     if (info.hubExists) {
-      throw new Error("This production already has a Drive hub");
+      throw new ConvexError("This production already has a Drive hub");
     }
     if (info.connectionId === null) {
-      throw new Error("Connect your Google Drive first (Settings → Drive)");
+      throw new ConvexError("Connect your Google Drive first (Settings → Drive)");
     }
     const token = await freshTokenOrClean(ctx, info.connectionId);
 
@@ -325,7 +309,7 @@ export const getPickerConfig = action({
   ): Promise<{ accessToken: string; apiKey: string; appId: string }> => {
     const mine = await ctx.runQuery(internal.drive.myConnection, {});
     if (!mine) {
-      throw new Error("Connect your Google Drive first (Settings → Drive)");
+      throw new ConvexError("Connect your Google Drive first (Settings → Drive)");
     }
     const accessToken = await freshTokenOrClean(ctx, mine.connectionId);
     const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID ?? "";
@@ -355,7 +339,7 @@ export const uploadToShot = action({
       shotId: args.shotId,
     });
     if (!info.hub) {
-      throw new Error("No Drive hub connected — connect one in settings");
+      throw new ConvexError("No Drive hub connected — connect one in settings");
     }
     const token = await freshTokenOrClean(ctx, info.hub.connectionId);
     const { optionsId } = await ensureShotFolders(ctx, token, info.hub, info.shot);
@@ -415,10 +399,10 @@ export const attachFromPicker = action({
       shotId: args.shotId,
     });
     if (!info.hub) {
-      throw new Error("No Drive hub connected — connect one in settings");
+      throw new ConvexError("No Drive hub connected — connect one in settings");
     }
     if (info.myConnectionId === null) {
-      throw new Error("Connect your Google Drive first (Settings → Drive)");
+      throw new ConvexError("Connect your Google Drive first (Settings → Drive)");
     }
     const myToken = await freshTokenOrClean(ctx, info.myConnectionId);
     const hubToken =
@@ -497,7 +481,7 @@ export const attachFromPicker = action({
         attached++;
       } catch (e) {
         if (e instanceof DriveAuthError) {
-          throw new Error("Drive connection expired — reconnect");
+          throw new ConvexError("Drive connection expired — reconnect");
         }
         console.log(
           `attachFromPicker: skipped ${picked.name}: ${String(e)}`,
@@ -654,7 +638,7 @@ export const syncNow = action({
       });
     } catch (e) {
       if (e instanceof DriveAuthError) {
-        throw new Error("Drive connection expired — reconnect");
+        throw new ConvexError("Drive connection expired — reconnect");
       }
       throw e;
     }
@@ -722,7 +706,7 @@ async function ensureShotFolders(
 ): Promise<{ shotFolderId: string; optionsId: string; approvedId: string }> {
   const shotsRoot: string | undefined = hub.folderIds["production.shots"];
   if (shotsRoot === undefined) {
-    throw new Error("Hub is missing the Shots folder — re-scaffold the hub");
+    throw new ConvexError("Hub is missing the Shots folder — re-scaffold the hub");
   }
   let shotFolderId = shot.driveFolderId;
   if (shotFolderId === null) {
@@ -730,11 +714,13 @@ async function ensureShotFolders(
       token,
       `'${qEscape(shotsRoot)}' in parents and name = '${qEscape(shot.code)}' and mimeType = '${FOLDER_MIME}' and trashed = false`,
     );
-    shotFolderId =
+    const candidateId =
       existing[0]?.id ?? (await createFolder(token, shot.code, shotsRoot)).id;
-    await ctx.runMutation(internal.drive.setShotDriveFolder, {
+    // Compare-and-set: a concurrent upload may have won the race — converge
+    // on whichever folder id the mutation kept.
+    shotFolderId = await ctx.runMutation(internal.drive.setShotDriveFolder, {
       shotId: shot._id,
-      driveFolderId: shotFolderId,
+      driveFolderId: candidateId,
     });
   }
   const children = await listFiles(
@@ -879,6 +865,8 @@ export const connectStateByToken = internalQuery({
       .withIndex("by_token", (q) => q.eq("stateToken", args.stateToken))
       .unique();
     if (state === null) return null;
+    // Stale OAuth states must not be replayable.
+    if (Date.now() - state._creationTime > 10 * 60 * 1000) return null;
     return { stateId: state._id, userId: state.userId, returnTo: state.returnTo };
   },
 });
@@ -1114,11 +1102,15 @@ export const persistToken = internalMutation({
     connectionId: v.id("googleConnections"),
     accessToken: v.string(),
     expiresAt: v.number(),
+    refreshToken: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<null> => {
     await ctx.db.patch(args.connectionId, {
       accessToken: args.accessToken,
       expiresAt: args.expiresAt,
+      ...(args.refreshToken !== undefined
+        ? { refreshToken: args.refreshToken }
+        : {}),
     });
     return null;
   },
@@ -1205,9 +1197,12 @@ export const setHub = internalMutation({
 
 export const setShotDriveFolder = internalMutation({
   args: { shotId: v.id("shots"), driveFolderId: v.string() },
-  handler: async (ctx, args): Promise<null> => {
+  handler: async (ctx, args): Promise<string> => {
+    const shot = await ctx.db.get(args.shotId);
+    if (shot === null) throw new Error("Shot not found");
+    if (shot.driveFolderId !== undefined) return shot.driveFolderId;
     await ctx.db.patch(args.shotId, { driveFolderId: args.driveFolderId });
-    return null;
+    return args.driveFolderId;
   },
 });
 

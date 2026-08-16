@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -69,18 +69,41 @@ async function enrichShot(ctx: QueryCtx, shot: Doc<"shots">) {
   };
 }
 
-/** All filters optional & combinable; filtered in JS after the index query. */
+/**
+ * All filters optional & combinable; filtered in JS after the index query.
+ * The id filters accept plain strings (they often arrive from URL params) and
+ * are resolved via normalizeId — a malformed value matches nothing instead of
+ * crashing the query.
+ */
 export const list = query({
   args: {
     productionId: v.id("productions"),
     status: v.optional(shotStatus),
     stage: v.optional(stageKey),
-    sceneId: v.optional(v.id("scenes")),
-    assigneeId: v.optional(v.id("users")),
-    episodeId: v.optional(v.id("episodes")),
+    sceneId: v.optional(v.string()),
+    assigneeId: v.optional(v.string()),
+    episodeId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await assertMemberForProduction(ctx, args.productionId);
+    let sceneId: Id<"scenes"> | undefined;
+    if (args.sceneId !== undefined) {
+      const normalized = ctx.db.normalizeId("scenes", args.sceneId);
+      if (normalized === null) return [];
+      sceneId = normalized;
+    }
+    let assigneeId: Id<"users"> | undefined;
+    if (args.assigneeId !== undefined) {
+      const normalized = ctx.db.normalizeId("users", args.assigneeId);
+      if (normalized === null) return [];
+      assigneeId = normalized;
+    }
+    let episodeId: Id<"episodes"> | undefined;
+    if (args.episodeId !== undefined) {
+      const normalized = ctx.db.normalizeId("episodes", args.episodeId);
+      if (normalized === null) return [];
+      episodeId = normalized;
+    }
     let shots = await ctx.db
       .query("shots")
       .withIndex("by_production", (q) =>
@@ -91,12 +114,12 @@ export const list = query({
       shots = shots.filter((s) => s.status === args.status);
     if (args.stage !== undefined)
       shots = shots.filter((s) => s.stage === args.stage);
-    if (args.sceneId !== undefined)
-      shots = shots.filter((s) => s.sceneId === args.sceneId);
-    if (args.assigneeId !== undefined)
-      shots = shots.filter((s) => s.assigneeId === args.assigneeId);
-    if (args.episodeId !== undefined)
-      shots = shots.filter((s) => s.episodeId === args.episodeId);
+    if (sceneId !== undefined)
+      shots = shots.filter((s) => s.sceneId === sceneId);
+    if (assigneeId !== undefined)
+      shots = shots.filter((s) => s.assigneeId === assigneeId);
+    if (episodeId !== undefined)
+      shots = shots.filter((s) => s.episodeId === episodeId);
     shots.sort((a, b) => a.order - b.order);
     return await Promise.all(shots.map((shot) => enrichShot(ctx, shot)));
   },
@@ -106,7 +129,7 @@ export const get = query({
   args: { shotId: v.id("shots") },
   handler: async (ctx, args) => {
     const shot = await ctx.db.get(args.shotId);
-    if (!shot) throw new Error("Shot not found");
+    if (!shot) throw new ConvexError("Shot not found");
     const { production } = await assertMemberForProduction(
       ctx,
       shot.productionId,
@@ -148,16 +171,16 @@ export const create = mutation({
       "content.edit",
     );
     const code = args.code.trim().toUpperCase();
-    if (code.length === 0) throw new Error("Shot code is required");
+    if (code.length === 0) throw new ConvexError("Shot code is required");
     if (args.sceneId !== undefined) {
       const scene = await ctx.db.get(args.sceneId);
       if (!scene || scene.productionId !== args.productionId)
-        throw new Error("Scene not found in this production");
+        throw new ConvexError("Scene not found in this production");
     }
     if (args.episodeId !== undefined) {
       const episode = await ctx.db.get(args.episodeId);
       if (!episode || episode.productionId !== args.productionId)
-        throw new Error("Episode not found in this production");
+        throw new ConvexError("Episode not found in this production");
     }
     if (args.assigneeId !== undefined) {
       const membership = await getMembership(
@@ -166,10 +189,10 @@ export const create = mutation({
         args.assigneeId,
       );
       if (!membership)
-        throw new Error("Assignee is not a member of this studio");
+        throw new ConvexError("Assignee is not a member of this studio");
     }
     if (args.dueDate !== undefined && !DATE_RE.test(args.dueDate))
-      throw new Error("Due date must be YYYY-MM-DD");
+      throw new ConvexError("Due date must be YYYY-MM-DD");
     const existing = await ctx.db
       .query("shots")
       .withIndex("by_production", (q) =>
@@ -177,7 +200,7 @@ export const create = mutation({
       )
       .collect();
     if (existing.some((s) => s.code === code))
-      throw new Error(`Shot code ${code} already exists in this production`);
+      throw new ConvexError(`Shot code ${code} already exists in this production`);
     const order = existing.reduce((max, s) => Math.max(max, s.order), 0) + 1;
     const shotId = await ctx.db.insert("shots", {
       productionId: args.productionId,
@@ -224,12 +247,12 @@ export const bulkCreate = mutation({
     if (args.sceneId !== undefined) {
       const scene = await ctx.db.get(args.sceneId);
       if (!scene || scene.productionId !== args.productionId)
-        throw new Error("Scene not found in this production");
+        throw new ConvexError("Scene not found in this production");
     }
     if (args.episodeId !== undefined) {
       const episode = await ctx.db.get(args.episodeId);
       if (!episode || episode.productionId !== args.productionId)
-        throw new Error("Episode not found in this production");
+        throw new ConvexError("Episode not found in this production");
     }
     const existing = await ctx.db
       .query("shots")
@@ -282,13 +305,14 @@ export const update = mutation({
     title: v.optional(v.string()),
     sceneId: v.optional(v.id("scenes")),
     assigneeId: v.optional(v.id("users")),
-    dueDate: v.optional(v.string()),
+    // null clears the due date; a string sets it (YYYY-MM-DD).
+    dueDate: v.optional(v.union(v.string(), v.null())),
     order: v.optional(v.number()),
     episodeId: v.optional(v.id("episodes")),
   },
   handler: async (ctx, args) => {
     const shot = await ctx.db.get(args.shotId);
-    if (!shot) throw new Error("Shot not found");
+    if (!shot) throw new ConvexError("Shot not found");
     const { userId, member, production } = await assertMemberForProduction(
       ctx,
       shot.productionId,
@@ -300,7 +324,7 @@ export const update = mutation({
       title?: string;
       sceneId?: Id<"scenes">;
       assigneeId?: Id<"users">;
-      dueDate?: string;
+      dueDate?: string | undefined;
       order?: number;
       episodeId?: Id<"episodes">;
     } = {};
@@ -313,7 +337,7 @@ export const update = mutation({
     if (args.sceneId !== undefined && args.sceneId !== shot.sceneId) {
       const scene = await ctx.db.get(args.sceneId);
       if (!scene || scene.productionId !== shot.productionId)
-        throw new Error("Scene not found in this production");
+        throw new ConvexError("Scene not found in this production");
       patch.sceneId = args.sceneId;
       changes.push(`scene → ${scene.code}`);
     }
@@ -325,7 +349,7 @@ export const update = mutation({
         args.assigneeId,
       );
       if (!membership)
-        throw new Error("Assignee is not a member of this studio");
+        throw new ConvexError("Assignee is not a member of this studio");
       const assigneeUser = await ctx.db.get(args.assigneeId);
       patch.assigneeId = args.assigneeId;
       newAssigneeId = args.assigneeId;
@@ -333,9 +357,15 @@ export const update = mutation({
         `assignee → ${assigneeUser?.name ?? assigneeUser?.email ?? "Unknown"}`,
       );
     }
-    if (args.dueDate !== undefined && args.dueDate !== shot.dueDate) {
+    if (args.dueDate === null) {
+      // Patching with an explicit undefined removes the field.
+      if (shot.dueDate !== undefined) {
+        patch.dueDate = undefined;
+        changes.push("due date cleared");
+      }
+    } else if (args.dueDate !== undefined && args.dueDate !== shot.dueDate) {
       if (!DATE_RE.test(args.dueDate))
-        throw new Error("Due date must be YYYY-MM-DD");
+        throw new ConvexError("Due date must be YYYY-MM-DD");
       patch.dueDate = args.dueDate;
       changes.push(`due → ${args.dueDate}`);
     }
@@ -346,7 +376,7 @@ export const update = mutation({
     if (args.episodeId !== undefined && args.episodeId !== shot.episodeId) {
       const episode = await ctx.db.get(args.episodeId);
       if (!episode || episode.productionId !== shot.productionId)
-        throw new Error("Episode not found in this production");
+        throw new ConvexError("Episode not found in this production");
       patch.episodeId = args.episodeId;
       changes.push(`episode → EP${String(episode.number).padStart(2, "0")}`);
     }
@@ -382,7 +412,7 @@ export const setStatus = mutation({
   args: { shotId: v.id("shots"), status: shotStatus },
   handler: async (ctx, args) => {
     const shot = await ctx.db.get(args.shotId);
-    if (!shot) throw new Error("Shot not found");
+    if (!shot) throw new ConvexError("Shot not found");
     const { userId, member } = await assertMemberForProduction(
       ctx,
       shot.productionId,
@@ -392,7 +422,7 @@ export const setStatus = mutation({
     if (args.status === shot.status) return;
     // Spec §6 invariants.
     if (args.status === "approved" && shot.pickedVersionId === undefined)
-      throw new Error("Pick a version before approving this shot");
+      throw new ConvexError("Pick a version before approving this shot");
     if (args.status === "delivered") {
       const delivery = await ctx.db
         .query("stageInstances")
@@ -402,7 +432,7 @@ export const setStatus = mutation({
         .filter((q) => q.eq(q.field("stage"), "delivery"))
         .unique();
       if (delivery !== null && delivery.gateStatus === "rejected")
-        throw new Error(
+        throw new ConvexError(
           "The delivery gate is rejected — resolve it before delivering shots",
         );
     }
@@ -423,7 +453,7 @@ export const setStage = mutation({
   args: { shotId: v.id("shots"), stage: stageKey },
   handler: async (ctx, args) => {
     const shot = await ctx.db.get(args.shotId);
-    if (!shot) throw new Error("Shot not found");
+    if (!shot) throw new ConvexError("Shot not found");
     const { userId } = await assertCanForProduction(
       ctx,
       shot.productionId,

@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
@@ -55,7 +55,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     const name = args.name.trim();
-    if (name.length < 2) throw new Error("Studio name is too short");
+    if (name.length < 2) throw new ConvexError("Studio name is too short");
     let slug = slugify(name);
     const clash = await ctx.db
       .query("studios")
@@ -122,13 +122,13 @@ export const invite = mutation({
     await assertCan(ctx, args.studioId, "studio.manage");
     const email = args.email.toLowerCase().trim();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
-      throw new Error("That doesn't look like an email address");
+      throw new ConvexError("That doesn't look like an email address");
     const existing = await ctx.db
       .query("memberships")
       .withIndex("by_invited_email", (q) => q.eq("invitedEmail", email))
       .collect();
     if (existing.some((m) => m.studioId === args.studioId))
-      throw new Error("Already invited");
+      throw new ConvexError("Already invited");
     await ctx.db.insert("memberships", {
       studioId: args.studioId,
       role: args.role,
@@ -146,7 +146,7 @@ export const updateMember = mutation({
   },
   handler: async (ctx, args) => {
     const membership = await ctx.db.get(args.membershipId);
-    if (!membership) throw new Error("Member not found");
+    if (!membership) throw new ConvexError("Member not found");
     const { member } = await assertCan(
       ctx,
       membership.studioId,
@@ -166,7 +166,7 @@ export const updateMember = mutation({
             .collect()
         ).filter((m) => m.role === "owner" && m.userId !== undefined);
         if (owners.length <= 1)
-          throw new Error("A studio needs at least one owner");
+          throw new ConvexError("A studio needs at least one owner");
       }
     }
     await ctx.db.patch(args.membershipId, {
@@ -189,9 +189,9 @@ export const removeMember = mutation({
       "studio.manage",
     );
     if (membership.userId === userId)
-      throw new Error("You can't remove yourself");
+      throw new ConvexError("You can't remove yourself");
     if (membership.role === "owner" && membership.userId !== undefined)
-      throw new Error("Transfer ownership before removing an owner");
+      throw new ConvexError("Transfer ownership before removing an owner");
     await ctx.db.delete(args.membershipId);
   },
 });

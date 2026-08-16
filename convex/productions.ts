@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -105,17 +105,17 @@ export const create = mutation({
     );
 
     const name = args.name.trim();
-    if (name.length < 2) throw new Error("Production name is too short");
+    if (name.length < 2) throw new ConvexError("Production name is too short");
 
     const code = args.code.trim().toUpperCase();
     if (!/^[A-Z0-9]{2,6}$/.test(code))
-      throw new Error("Code must be 2–6 characters, A–Z or 0–9");
+      throw new ConvexError("Code must be 2–6 characters, A–Z or 0–9");
     const siblings = await ctx.db
       .query("productions")
       .withIndex("by_studio", (q) => q.eq("studioId", args.studioId))
       .collect();
     if (siblings.some((p) => p.code === code))
-      throw new Error(`Code ${code} is already used in this studio`);
+      throw new ConvexError(`Code ${code} is already used in this studio`);
 
     const timezone = args.timezone?.trim() || "Europe/Zurich";
 
@@ -143,7 +143,7 @@ export const create = mutation({
     if (args.kind === "episodic" && args.episodeCount !== undefined) {
       const count = Math.floor(args.episodeCount);
       if (count < 1 || count > 200)
-        throw new Error("Episode count must be between 1 and 200");
+        throw new ConvexError("Episode count must be between 1 and 200");
       for (let number = 1; number <= count; number++) {
         await ctx.db.insert("episodes", { productionId, number });
       }
@@ -228,7 +228,7 @@ export const update = mutation({
     let name: string | undefined;
     if (args.name !== undefined) {
       name = args.name.trim();
-      if (name.length < 2) throw new Error("Production name is too short");
+      if (name.length < 2) throw new ConvexError("Production name is too short");
       if (name !== production.name) changes.push(`renamed to "${name}"`);
       else name = undefined;
     }
@@ -240,7 +240,7 @@ export const update = mutation({
     let timezone: string | undefined;
     if (args.timezone !== undefined) {
       timezone = args.timezone.trim();
-      if (timezone.length === 0) throw new Error("Timezone cannot be empty");
+      if (timezone.length === 0) throw new ConvexError("Timezone cannot be empty");
       if (timezone !== production.timezone)
         changes.push(`timezone → ${timezone}`);
       else timezone = undefined;
@@ -297,7 +297,7 @@ export const setStageStatus = mutation({
   },
   handler: async (ctx, args) => {
     const stageInstance = await ctx.db.get(args.stageInstanceId);
-    if (!stageInstance) throw new Error("Stage not found");
+    if (!stageInstance) throw new ConvexError("Stage not found");
     const { userId, member } = await assertMemberForProduction(
       ctx,
       stageInstance.productionId,
@@ -332,7 +332,7 @@ export const setGateApprovers = mutation({
   },
   handler: async (ctx, args) => {
     const stageInstance = await ctx.db.get(args.stageInstanceId);
-    if (!stageInstance) throw new Error("Stage not found");
+    if (!stageInstance) throw new ConvexError("Stage not found");
     const { production } = await assertCanForProduction(
       ctx,
       stageInstance.productionId,
@@ -347,7 +347,7 @@ export const setGateApprovers = mutation({
         approverId,
       );
       if (!membership)
-        throw new Error("All gate approvers must be studio members");
+        throw new ConvexError("All gate approvers must be studio members");
     }
 
     await ctx.db.patch(args.stageInstanceId, { gateApproverIds: approverIds });

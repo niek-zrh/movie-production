@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import {
@@ -53,7 +53,7 @@ export const listForShot = query({
   args: { shotId: v.id("shots") },
   handler: async (ctx, args): Promise<EnrichedAsset[]> => {
     const shot = await ctx.db.get(args.shotId);
-    if (!shot) throw new Error("Shot not found");
+    if (!shot) throw new ConvexError("Shot not found");
     await assertMemberForProduction(ctx, shot.productionId);
     const assets = await ctx.db
       .query("assets")
@@ -72,16 +72,16 @@ export const attachToShot = mutation({
   },
   handler: async (ctx, args) => {
     const asset = await ctx.db.get(args.assetId);
-    if (!asset) throw new Error("Asset not found");
+    if (!asset) throw new ConvexError("Asset not found");
     const shot = await ctx.db.get(args.shotId);
-    if (!shot) throw new Error("Shot not found");
+    if (!shot) throw new ConvexError("Shot not found");
     const { userId } = await assertCanForProduction(
       ctx,
       shot.productionId,
       "version.create",
     );
     if (asset.productionId !== shot.productionId) {
-      throw new Error("Asset and shot belong to different productions");
+      throw new ConvexError("Asset and shot belong to different productions");
     }
 
     if (args.asVersion) {
@@ -94,6 +94,11 @@ export const attachToShot = mutation({
       });
     }
 
+    if (asset.versionId !== undefined) {
+      throw new ConvexError(
+        "This file already backs a version — it moves with its shot",
+      );
+    }
     await ctx.db.patch(asset._id, { shotId: shot._id });
     const name = await actorName(ctx, userId);
     await logActivity(ctx, {
@@ -123,16 +128,16 @@ export const addLink = mutation({
     );
     const url = args.url.trim();
     if (!/^https?:\/\//i.test(url)) {
-      throw new Error("Link must be an http(s) URL");
+      throw new ConvexError("Link must be an http(s) URL");
     }
     const name = args.name.trim();
-    if (name.length === 0) throw new Error("Give the link a name");
+    if (name.length === 0) throw new ConvexError("Give the link a name");
 
     let shot: Doc<"shots"> | null = null;
     if (args.shotId !== undefined) {
       shot = await ctx.db.get(args.shotId);
       if (!shot || shot.productionId !== args.productionId) {
-        throw new Error("Shot not found in this production");
+        throw new ConvexError("Shot not found in this production");
       }
     }
 
