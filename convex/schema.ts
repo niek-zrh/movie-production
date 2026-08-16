@@ -48,6 +48,13 @@ export default defineSchema({
     revoked: v.optional(v.boolean()),
   }).index("by_user", ["userId"]),
 
+  // Short-lived state tokens for the Drive OAuth code flow (spec §7.2).
+  driveConnectStates: defineTable({
+    stateToken: v.string(),
+    userId: v.id("users"),
+    returnTo: v.string(), // app path to land on after the callback
+  }).index("by_token", ["stateToken"]),
+
   studios: defineTable({
     name: v.string(),
     slug: v.string(),
