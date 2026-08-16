@@ -1,0 +1,176 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-sans: var(--font-inter);
+    --font-display: var(--font-space-grotesk);
+    --font-mono: var(--font-jetbrains-mono);
+    --font-heading: var(--font-space-grotesk);
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --radius-3xl: calc(var(--radius) * 2.2);
+    --radius-4xl: calc(var(--radius) * 2.6);
+
+    /* Slate tokens (spec §9.2) */
+    --color-tape: var(--tape);
+    --color-tape-foreground: #ffffff;
+    --color-status-planned: #8a8f98;
+    --color-status-generating: #b58900;
+    --color-status-options_ready: #2e7de1;
+    --color-status-in_review: #7048e8;
+    --color-status-picked: #ff4d00;
+    --color-status-approved: #1f9d55;
+    --color-status-rework: #d97706;
+    --color-status-final: #0f766e;
+    --color-status-delivered: #334155;
+    --color-status-killed: #991b1b;
+}
+
+/* Management surfaces: "production office" — paper-bright, calm. */
+:root {
+    --background: #fafaf7; /* Paper */
+    --foreground: #17181c; /* Ink */
+    --card: #ffffff; /* Panel */
+    --card-foreground: #17181c;
+    --popover: #ffffff;
+    --popover-foreground: #17181c;
+    --primary: #17181c;
+    --primary-foreground: #fafaf7;
+    --secondary: #f1f1ec;
+    --secondary-foreground: #17181c;
+    --muted: #f1f1ec;
+    --muted-foreground: #6e7076;
+    --accent: #f1f1ec;
+    --accent-foreground: #17181c;
+    --destructive: #b42318;
+    --border: #e4e4de; /* Line */
+    --input: #e4e4de;
+    --ring: #ff4d00;
+    --chart-1: #2e7de1;
+    --chart-2: #7048e8;
+    --chart-3: #1f9d55;
+    --chart-4: #d97706;
+    --chart-5: #8a8f98;
+    --radius: 0.625rem; /* 10px cards; radius-sm = 6px controls */
+    --sidebar: #f5f5f1;
+    --sidebar-foreground: #17181c;
+    --sidebar-primary: #17181c;
+    --sidebar-primary-foreground: #fafaf7;
+    --sidebar-accent: #eaeae4;
+    --sidebar-accent-foreground: #17181c;
+    --sidebar-border: #e4e4de;
+    --sidebar-ring: #ff4d00;
+    /* Camera-tape orange: primary actions, Pick, unread markers only. */
+    --tape: #ff4d00;
+}
+
+/* Review Room: "grading suite" — true dark, chromeless, media first. */
+.dark {
+    --background: #0e0f12;
+    --foreground: #e8e8e4;
+    --card: #191b20;
+    --card-foreground: #e8e8e4;
+    --popover: #191b20;
+    --popover-foreground: #e8e8e4;
+    --primary: #e8e8e4;
+    --primary-foreground: #17181c;
+    --secondary: #22242b;
+    --secondary-foreground: #e8e8e4;
+    --muted: #22242b;
+    --muted-foreground: #9a9ca3;
+    --accent: #22242b;
+    --accent-foreground: #e8e8e4;
+    --destructive: #ef6351;
+    --border: #26282f;
+    --input: #26282f;
+    --ring: #ff4d00;
+    --chart-1: #2e7de1;
+    --chart-2: #7048e8;
+    --chart-3: #1f9d55;
+    --chart-4: #d97706;
+    --chart-5: #8a8f98;
+    --sidebar: #14161a;
+    --sidebar-foreground: #e8e8e4;
+    --sidebar-primary: #e8e8e4;
+    --sidebar-primary-foreground: #17181c;
+    --sidebar-accent: #22242b;
+    --sidebar-accent-foreground: #e8e8e4;
+    --sidebar-border: #26282f;
+    --sidebar-ring: #ff4d00;
+    --tape: #ff4d00;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    }
+  body {
+    @apply bg-background text-foreground;
+    }
+  html {
+    @apply font-sans;
+    }
+}
+
+@layer components {
+  /* The slate strip (spec §9.2): slim clapperboard header band on every
+     shot/version card. Mono code left, status chip right, 2px status edge. */
+  .slate-strip {
+    @apply flex items-center justify-between gap-2 border-b border-border bg-muted/60 px-2.5 py-1.5 font-mono text-[11px] tracking-tight;
+    border-top: 2px solid var(--strip-color, var(--border));
+    border-top-left-radius: inherit;
+    border-top-right-radius: inherit;
+  }
+
+  /* One orchestrated moment: the "clap" on Pick (spec §9.2). */
+  @keyframes slate-clap {
+    0% { transform: scaleY(1); }
+    35% { transform: scaleY(0.62); }
+    70% { transform: scaleY(1.06); }
+    100% { transform: scaleY(1); }
+  }
+  .slate-clap {
+    animation: slate-clap 260ms ease-out;
+    transform-origin: top;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .slate-clap { animation: none; }
+  }
+}
