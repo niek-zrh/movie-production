@@ -52,7 +52,7 @@ async function userRef(
 // required defaults to true unless noted.
 // ---------------------------------------------------------------------------
 
-const DEFAULT_TEMPLATE: {
+export const DEFAULT_TEMPLATE: {
   category: QcCategory;
   name: string;
   spec: string;
