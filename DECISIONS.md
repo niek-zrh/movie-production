@@ -70,6 +70,12 @@ Format: date — decision — why. Spec references are to the mega prompt
   cannot be backdated, so seeded activity is all "today" (which makes
   "Generate now" demos rich instead).
 
+- 2026-08-17 — **Product renamed to "Kinolab"** (domain kinolab.ai claimed by
+  Niek). All user-visible copy, metadata, package name and localStorage keys
+  renamed. The `SlateStrip` component, `slate-strip`/`slate-clap` CSS classes
+  and the QC parameter "Slate info correct" keep their names — they refer to
+  the physical clapperboard slate (the design motif), not the old brand.
+
 ## Post-pilot parking lot
 1. Resource planning / workload view (raised in discovery, spec §14).
 2. Telegram notification delivery via `lib/notify.ts` fan-out.

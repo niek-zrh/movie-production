@@ -1,7 +1,7 @@
 import { expect, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
 /**
- * Shared helpers for the Slate E2E suite. Every spec creates its own
+ * Shared helpers for the Kinolab E2E suite. Every spec creates its own
  * throwaway users/studios (multi-tenant isolation keeps them invisible to
  * real accounts), so specs can run in parallel against one dev server.
  */

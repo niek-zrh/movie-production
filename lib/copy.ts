@@ -3,7 +3,7 @@
  * Voice: plain verbs, sentence case; buttons say what happens.
  */
 export const copy = {
-  appName: "Slate",
+  appName: "Kinolab",
   tagline: "Files live in Drive. Decisions live here.",
 
   nav: {

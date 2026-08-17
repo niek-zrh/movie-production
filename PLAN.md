@@ -1,6 +1,7 @@
-# Slate — build plan
+# Kinolab — build plan
 
-Working name **Slate** (per mega prompt). Milestones from spec §11; a box is
+Built under the working name **Slate**; officially **Kinolab** (kinolab.ai)
+since 2026-08-17. Milestones from spec §11; a box is
 checked only after its acceptance criteria passed locally (typecheck + build +
 Playwright end-to-end run in `e2e/`).
 

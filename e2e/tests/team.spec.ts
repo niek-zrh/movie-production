@@ -230,7 +230,7 @@ test.describe.serial("team", () => {
       studioName,
       { timeout: 15_000 },
     );
-    await expect(memberPage.getByText("Welcome to Slate")).toHaveCount(0);
+    await expect(memberPage.getByText("Welcome to Kinolab")).toHaveCount(0);
     await expect(memberPage.locator("#studio-name")).toHaveCount(0);
   });
 

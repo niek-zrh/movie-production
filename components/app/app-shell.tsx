@@ -63,7 +63,7 @@ function Shell({ children }: { children: ReactNode }) {
         <Link
           href="/"
           className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
-          aria-label="Slate home"
+          aria-label="Kinolab home"
         >
           <Clapperboard className="size-4" />
         </Link>
@@ -152,7 +152,7 @@ function SessionRecovery() {
   const [attempted, setAttempted] = useState(false);
 
   useEffect(() => {
-    const key = "slate.sessionRecoveryAt";
+    const key = "kinolab.sessionRecoveryAt";
     const last = Number(sessionStorage.getItem(key) ?? 0);
     const timer = setTimeout(() => {
       if (Date.now() - last > 10_000) {

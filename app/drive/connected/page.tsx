@@ -20,7 +20,7 @@ export default async function DriveConnectedPage({
             : "You can close this tab and return to the app."}
         </p>
         <Link href="/" className="mt-4 inline-block text-sm underline underline-offset-4">
-          Back to Slate
+          Back to Kinolab
         </Link>
       </div>
     </main>

@@ -18,7 +18,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Slate",
+  title: "Kinolab",
   description: "Production orchestration for AI-native film studios",
 };
 

@@ -159,7 +159,7 @@ export function DriveConnectCard({
               </p>
             )}
             <p className="text-sm text-muted-foreground">
-              Connect your Google account so Slate can create and organize the
+              Connect your Google account so Kinolab can create and organize the
               production&apos;s folder tree in Drive.
             </p>
             <Button onClick={() => void connect()} disabled={connecting}>

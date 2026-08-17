@@ -71,7 +71,7 @@ test.describe.serial("auth", () => {
   test("sign-up lands on the create-studio screen", async ({ page }) => {
     const errors = trackErrors(page);
     await signUpRobust(page, "Auth Owner", email);
-    await expect(page.getByText("Welcome to Slate")).toBeVisible();
+    await expect(page.getByText("Welcome to Kinolab")).toBeVisible();
     await expect(page.locator("#studio-name")).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Create studio" }),

@@ -34,7 +34,7 @@ import {
   NewShotDialog,
 } from "./_components/shots-create";
 
-const VIEW_KEY = "slate.shotsView";
+const VIEW_KEY = "kinolab.shotsView";
 type ShotsView = "table" | "grid";
 
 export default function ShotsPage() {

@@ -1,4 +1,4 @@
-# Slate
+# Kinolab
 
 Production orchestration for AI-native film studios. **Files live in Drive.
 Decisions live here.** One calm overview per production, a stage-gated
@@ -78,7 +78,7 @@ Do this before the pilot so files live in the studio's own Drive.
 
 1. Create a GCP project → enable **Google Drive API** and **Google Picker
    API** (APIs & Services → Library).
-2. **OAuth consent screen**: External · app name "Slate" · scopes: `openid`,
+2. **OAuth consent screen**: External · app name "Kinolab" · scopes: `openid`,
    `email`, `profile`, `https://www.googleapis.com/auth/drive.file` (all
    non-sensitive → no CASA security assessment) · **Publish to "In
    production"** (do NOT stay in Testing — testing refresh tokens expire
@@ -153,7 +153,7 @@ isolation keeps them invisible to real accounts.
 app/                  Next.js routes (App Router)
   (auth)/sign-in      Sign-in (password fallback + Google)
   (app)/              Shell: studio home, team, /new wizard, /p/[productionId]/*
-components/app        Slate components (slate-strip, status-pill, shell…)
+components/app        Kinolab components (slate-strip, status-pill, shell…)
 components/ui         shadcn/ui primitives (Base UI generation)
 convex/               Backend: schema, auth, modules per docs/CONTRACTS.md
   lib/                permissions (assertCan), activity, notify, domain, google (Drive REST)

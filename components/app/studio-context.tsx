@@ -28,7 +28,7 @@ const StudioContext = createContext<StudioContextValue>({
   role: null,
 });
 
-const STORAGE_KEY = "slate.activeStudioId";
+const STORAGE_KEY = "kinolab.activeStudioId";
 
 export function StudioProvider({ children }: { children: ReactNode }) {
   const viewer = useQuery(api.users.viewer);
