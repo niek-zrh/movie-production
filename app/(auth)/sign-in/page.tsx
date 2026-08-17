@@ -3,7 +3,6 @@
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +13,6 @@ import { Clapperboard } from "lucide-react";
 export default function SignInPage() {
   const { signIn } = useAuthActions();
   const providers = useQuery(api.users.authProviders);
-  const router = useRouter();
   const [flow, setFlow] = useState<"signIn" | "signUp">("signIn");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -26,13 +24,22 @@ export default function SignInPage() {
     const formData = new FormData(e.currentTarget);
     formData.set("flow", flow);
     try {
-      await signIn("password", formData);
-      router.push("/");
+      // The auth action can hang instead of rejecting (e.g. signing up with
+      // an email that already has an account) — don't leave the form stuck.
+      await Promise.race([
+        signIn("password", formData),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("timeout")), 15_000),
+        ),
+      ]);
+      // Full navigation (not router.push): the fresh auth cookie must be
+      // visible to the middleware, which an immediate RSC navigation can race.
+      window.location.assign("/");
     } catch {
       setError(
         flow === "signIn"
           ? "Wrong email or password. New here? Switch to create account."
-          : "Could not create the account. Use at least 8 characters for the password.",
+          : "Could not create the account. An account with this email may already exist — try signing in. Passwords need at least 8 characters.",
       );
       setBusy(false);
     }

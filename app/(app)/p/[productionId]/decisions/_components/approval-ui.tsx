@@ -78,7 +78,8 @@ export function ScopeBadge({ scope }: { scope: ApprovalScope }) {
  */
 export function firstErrorLine(message: string): string {
   const lines = message.split("\n").map((l) => l.trim());
-  const uncaught = lines.find((l) => l.startsWith("Uncaught Error:"));
-  if (uncaught) return uncaught.replace(/^Uncaught Error:\s*/, "");
+  // Matches "Uncaught Error:", "Uncaught ConvexError:", etc.
+  const uncaught = lines.find((l) => /^Uncaught [A-Za-z]*Error:/.test(l));
+  if (uncaught) return uncaught.replace(/^Uncaught [A-Za-z]*Error:\s*/, "");
   return lines.find((l) => l.length > 0) ?? "Something didn't work — try again";
 }

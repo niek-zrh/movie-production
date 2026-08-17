@@ -30,10 +30,9 @@ export const VERSION_STATUS_LABEL: Record<VersionStatus, string> = {
  */
 export function firstErrorLine(e: unknown): string {
   if (!(e instanceof Error)) return "Something didn't work — try again";
-  const marker = "Uncaught Error: ";
-  const at = e.message.indexOf(marker);
-  const rest = at >= 0 ? e.message.slice(at + marker.length) : e.message;
-  const line = rest.split("\n")[0]?.trim();
+  // Matches "Uncaught Error:", "Uncaught ConvexError:", etc.
+  const match = /Uncaught (?:[A-Za-z]*Error):? ?([^\n]*)/.exec(e.message);
+  const line = (match?.[1] ?? e.message.split("\n")[0])?.trim();
   return line !== undefined && line !== ""
     ? line
     : "Something didn't work — try again";

@@ -121,8 +121,15 @@ export default function TeamPage() {
                           )
                         }
                       >
-                        <SelectTrigger size="sm" className="w-40">
-                          <SelectValue />
+                        <SelectTrigger
+                          size="sm"
+                          className="w-40"
+                          aria-label={`Role of ${m.name}`}
+                        >
+                          <SelectValue>
+                            {ROLES.find((r) => r.key === m.role)?.label ??
+                              m.role}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           {ROLES.map((r) => (
@@ -249,8 +256,11 @@ function InviteDialog({ studioId }: { studioId: Id<"studios"> }) {
                 value={inviteRole}
                 onValueChange={(v) => setInviteRole(v as RoleKey)}
               >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
+                <SelectTrigger className="w-full" aria-label="Role">
+                  <SelectValue>
+                    {ROLES.find((r) => r.key === inviteRole)?.label ??
+                      inviteRole}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {ROLES.filter((r) => r.key !== "owner").map((r) => (

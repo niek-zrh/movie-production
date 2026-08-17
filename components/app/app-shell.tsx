@@ -3,7 +3,7 @@
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Check, ChevronsUpDown, Clapperboard, LogOut, Search, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,7 +51,7 @@ function Shell({ children }: { children: ReactNode }) {
     );
   }
 
-  if (viewer === null) return null; // middleware redirects to /sign-in
+  if (viewer === null) return <SessionRecovery />;
 
   if (viewer.studios.length === 0) return <CreateStudio />;
 
@@ -139,6 +139,38 @@ function Shell({ children }: { children: ReactNode }) {
 
       <CommandPalette open={searchOpen} onOpenChange={setSearchOpen} />
       <KeyboardOverlay open={helpOpen} onOpenChange={setHelpOpen} />
+    </div>
+  );
+}
+
+/**
+ * The middleware accepted the session cookie but the Convex client reports no
+ * user — a token-bootstrap race right after sign-in. One reload resolves it;
+ * if the session is genuinely gone, fall through to /sign-in.
+ */
+function SessionRecovery() {
+  const [attempted, setAttempted] = useState(false);
+
+  useEffect(() => {
+    const key = "slate.sessionRecoveryAt";
+    const last = Number(sessionStorage.getItem(key) ?? 0);
+    const timer = setTimeout(() => {
+      if (Date.now() - last > 10_000) {
+        sessionStorage.setItem(key, String(Date.now()));
+        window.location.reload();
+      } else {
+        setAttempted(true);
+        window.location.assign("/sign-in");
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  return (
+    <div className="flex min-h-screen items-center justify-center">
+      <p className="text-sm text-muted-foreground">
+        {attempted ? "Redirecting to sign-in…" : "Restoring your session…"}
+      </p>
     </div>
   );
 }
