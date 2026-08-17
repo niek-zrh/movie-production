@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -75,13 +76,15 @@ function Shell({ children }: { children: ReactNode }) {
             <ChevronsUpDown className="size-3.5 text-muted-foreground" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-56">
-            <DropdownMenuLabel>Studios</DropdownMenuLabel>
-            {viewer.studios.map((s) => (
-              <DropdownMenuItem key={s._id} onClick={() => setStudioId(s._id)}>
-                <span className="flex-1 truncate">{s.name}</span>
-                {s._id === studioId && <Check className="size-4" />}
-              </DropdownMenuItem>
-            ))}
+            <DropdownMenuGroup>
+              <DropdownMenuLabel>Studios</DropdownMenuLabel>
+              {viewer.studios.map((s) => (
+                <DropdownMenuItem key={s._id} onClick={() => setStudioId(s._id)}>
+                  <span className="flex-1 truncate">{s.name}</span>
+                  {s._id === studioId && <Check className="size-4" />}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => router.push("/team")}>
               <Users className="size-4" /> {copy.nav.team}
@@ -111,12 +114,14 @@ function Shell({ children }: { children: ReactNode }) {
               <UserAvatar name={viewer.name} image={viewer.image} className="size-7" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>
-                <div className="truncate">{viewer.name}</div>
-                <div className="truncate text-xs font-normal text-muted-foreground">
-                  {viewer.email}
-                </div>
-              </DropdownMenuLabel>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>
+                  <div className="truncate">{viewer.name}</div>
+                  <div className="truncate text-xs font-normal text-muted-foreground">
+                    {viewer.email}
+                  </div>
+                </DropdownMenuLabel>
+              </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() =>
