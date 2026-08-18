@@ -72,8 +72,19 @@ collaboration — boards, review rooms and gate chips update live.
 6. **Delivery engineer** (owner works) → QC → **New QC run** "EP01 — TV
    Master" → work the checklist to *passed* → it appears in Decisions as a
    delivery sign-off.
-7. Drop a file into the Drive hub in Drive itself → Files → **Sync now** →
-   it appears (unassigned) → **Attach to shot…**.
+7. Bring an existing Drive file in: shot → Files → **Attach from Drive** →
+   pick it in the Google Picker → it appears on the shot, and the hub copy
+   lands in the shot's folder.
+
+   > Note: dropping a file into the hub folder *in Drive itself* and pressing
+   > **Sync now** does NOT surface it. The app requests only `drive.file`,
+   > which grants access to files the app created plus files the user hands it
+   > through the Picker — a file dragged in via Drive's own UI is neither, so
+   > `files.list` never returns it. Seeing everything in the folder would need
+   > `drive.readonly` or `drive`, both of which are *restricted* scopes
+   > requiring Google's CASA security assessment. The Picker is the supported
+   > route in, and **Sync now** keeps already-known files up to date
+   > (renames, new revisions, trashed files).
 
 ---
 
@@ -130,7 +141,8 @@ metadata sync activate automatically.
 
 How the integration behaves (spec §7): scope is only `drive.file` — the app
 can touch nothing in anyone's Drive except the hub **it created** and files
-users **explicitly picked**. All hub writes use the hub owner's token;
+users **explicitly picked** (which is also why files added to the hub through
+Drive's own UI stay invisible to it — see the note in the demo script). All hub writes use the hub owner's token;
 personal tokens only read files their owner picked. Thumbnails are cached in
 Convex storage; full files never pass through the app.
 
