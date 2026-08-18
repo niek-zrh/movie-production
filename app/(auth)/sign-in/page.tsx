@@ -10,6 +10,77 @@ import { Label } from "@/components/ui/label";
 import { copy } from "@/lib/copy";
 import { KinolabMark, KinolabWordmark } from "@/components/app/kinolab-mark";
 
+/**
+ * Convex Auth stores the access token in localStorage under a key namespaced
+ * by the deployment URL (hence the prefix match) — and it stores it BEFORE the
+ * router-cache invalidation and the redirect run. A token that appeared during
+ * a submit therefore means the credentials were accepted.
+ */
+function storedAuthToken(): string | null {
+  try {
+    const key = Object.keys(window.localStorage).find((k) =>
+      k.startsWith("__convexAuthJWT"),
+    );
+    return key === undefined ? null : window.localStorage.getItem(key);
+  } catch {
+    // Storage can be blocked outright (private mode, third-party cookie rules).
+    return null;
+  }
+}
+
+/**
+ * Only the Convex action rejects credentials: /api/auth answers 4xx and the
+ * client rethrows the action's message. A broken transport looks completely
+ * different — fetch() rejects with a TypeError ("Failed to fetch",
+ * "NetworkError…", Safari's "Load failed"), or a proxy answers with an HTML
+ * error page that can't be parsed as JSON (SyntaxError).
+ */
+function isTransportError(err: unknown): boolean {
+  if (err instanceof TypeError || err instanceof SyntaxError) return true;
+  const message = err instanceof Error ? err.message : "";
+  return /Failed to fetch|NetworkError|Load failed|Network request failed|ERR_[A-Z_]+/i.test(
+    message,
+  );
+}
+
+/**
+ * Sign-in can fail in three places and each one needs its own answer. Telling
+ * everyone "wrong email or password" sent the studio hunting for password
+ * problems that did not exist — the whole proxy/redirect chain (Cloudflare →
+ * Traefik → Next) can fail long after the password was accepted.
+ */
+function failureMessage(
+  err: unknown,
+  flow: "signIn" | "signUp",
+  hadAuthToken: boolean,
+): string {
+  const message = err instanceof Error ? err.message : "";
+  // App-authored ConvexError messages (e.g. invite-only sign-ups) beat the
+  // generic copy.
+  const server = /ConvexError:\s*([^\n]+?)(?:\s+at\s.*)?$/m
+    .exec(message)?.[1]
+    ?.trim();
+  if (server && server.length <= 200) return server;
+  // The token landed during this submit: the account is fine and the auth
+  // cookies are set — only the post-auth hop failed. Never call this a
+  // password problem.
+  if (!hadAuthToken && storedAuthToken() !== null) {
+    return "Signed in — but the app didn't open. Reload this page to continue.";
+  }
+  // Never reached the backend: the fetch rejected, a proxy answered with
+  // Never reached the backend: the fetch rejected, or a proxy answered with
+  // something that isn't JSON.
+  if (isTransportError(err)) {
+    return "Could not reach the server. Check your connection and try again — your password is fine.";
+  }
+  if (message.includes("TooManyFailedAttempts")) {
+    return "Too many failed sign-in attempts. Wait a minute, then try again.";
+  }
+  return flow === "signIn"
+    ? "Wrong email or password. New here? Switch to create account."
+    : "Could not create the account. An account with this email may already exist — try signing in. Passwords need at least 8 characters.";
+}
+
 export default function SignInPage() {
   const { signIn } = useAuthActions();
   const providers = useQuery(api.users.authProviders);
@@ -29,32 +100,20 @@ export default function SignInPage() {
     if (typeof email === "string") {
       formData.set("email", email.trim().toLowerCase());
     }
+    // Read before the attempt so a token appearing during it is proof that
+    // authentication succeeded (see failureMessage).
+    const hadAuthToken = storedAuthToken() !== null;
     try {
-      // The auth action can hang instead of rejecting (e.g. signing up with
-      // an email that already has an account) — don't leave the form stuck.
-      await Promise.race([
-        signIn("password", formData),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("timeout")), 15_000),
-        ),
-      ]);
+      // No client-side timeout here on purpose: a slow-but-successful sign-in
+      // (cold server, bad hotel wifi) would abort into an error while the
+      // account was in fact created — the exact confusion this screen is
+      // being fixed for. The button's busy state carries the wait instead.
+      await signIn("password", formData);
       // Full navigation (not router.push): the fresh auth cookie must be
       // visible to the middleware, which an immediate RSC navigation can race.
       window.location.assign("/");
     } catch (err) {
-      // App-authored ConvexError messages (e.g. invite-only sign-ups) beat
-      // the generic copy.
-      const message = err instanceof Error ? err.message : "";
-      const server = /ConvexError:\s*([^\n]+?)(?:\s+at\s.*)?$/m
-        .exec(message)?.[1]
-        ?.trim();
-      setError(
-        server && server.length <= 200
-          ? server
-          : flow === "signIn"
-            ? "Wrong email or password. New here? Switch to create account."
-            : "Could not create the account. An account with this email may already exist — try signing in. Passwords need at least 8 characters.",
-      );
+      setError(failureMessage(err, flow, hadAuthToken));
       setBusy(false);
     }
   };

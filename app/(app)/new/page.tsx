@@ -32,14 +32,29 @@ import {
 } from "@/components/app/drive-connect-card";
 import { cn } from "@/lib/utils";
 
+/**
+ * Kept in step with the same list in the production settings page. The
+ * timezone drives the 18:00 daily report, so a crew that cannot pick its own
+ * zone gets the report at the wrong hour — Russian-speaking crews are spread
+ * across Moscow, the Balkans, Turkey, the Caucasus, Central Asia and the Gulf.
+ * Ordered west to east, UTC last. Every entry is a real IANA name (the server
+ * validates it via Intl).
+ */
 const TIMEZONES = [
-  "Europe/Zurich",
-  "Europe/Berlin",
   "Europe/London",
   "Europe/Paris",
+  "Europe/Berlin",
+  "Europe/Zurich",
+  "Europe/Belgrade",
+  "Europe/Istanbul",
+  "Europe/Moscow",
+  "Asia/Tbilisi",
+  "Asia/Yerevan",
+  "Asia/Dubai",
+  "Asia/Almaty",
+  "Asia/Tokyo",
   "America/New_York",
   "America/Los_Angeles",
-  "Asia/Tokyo",
   "UTC",
 ];
 

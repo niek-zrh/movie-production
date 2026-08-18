@@ -8,7 +8,9 @@
     "dev:backend": "convex dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:api": "node e2e/api/run.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@auth/core": "^0.41.3",

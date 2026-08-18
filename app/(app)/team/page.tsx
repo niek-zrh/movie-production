@@ -5,7 +5,18 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useState } from "react";
 import { toast } from "sonner";
-import { UserPlus } from "lucide-react";
+import { Loader2, UserPlus } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,6 +47,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserAvatar } from "@/components/app/user-avatar";
 import { useStudio } from "@/components/app/studio-context";
+import { showMutationError } from "@/components/app/drive-connect-card";
 import { ROLES, type RoleKey } from "@/convex/lib/domain";
 import { copy } from "@/lib/copy";
 
@@ -43,8 +55,11 @@ export default function TeamPage() {
   const { studioId, role } = useStudio();
   const team = useQuery(api.studios.team, studioId ? { studioId } : "skip");
   const updateMember = useMutation(api.studios.updateMember);
-  const removeMember = useMutation(api.studios.removeMember);
   const canManage = role === "owner" || role === "producer";
+  // Only an owner can create another owner (studios.updateMember enforces the
+  // same rank rule server-side — this just keeps the menu honest).
+  const assignableRoles =
+    role === "owner" ? ROLES : ROLES.filter((r) => r.key !== "owner");
 
   return (
     <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-8">
@@ -132,7 +147,10 @@ export default function TeamPage() {
                           </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
-                          {ROLES.map((r) => (
+                          {/* Nobody hands out a role above their own — the
+                              server refuses it (studios.updateMember), so
+                              don't offer the choice either. */}
+                          {assignableRoles.map((r) => (
                             <SelectItem key={r.key} value={r.key}>
                               {r.label}
                             </SelectItem>
@@ -147,20 +165,7 @@ export default function TeamPage() {
                   </TableCell>
                   {canManage && (
                     <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-muted-foreground"
-                        onClick={() =>
-                          void removeMember({ membershipId: m._id }).catch((e) =>
-                            toast.error(
-                              e instanceof Error ? e.message : "Could not remove",
-                            ),
-                          )
-                        }
-                      >
-                        Remove
-                      </Button>
+                      <RemoveMemberButton membershipId={m._id} name={m.name} />
                     </TableCell>
                   )}
                 </TableRow>
@@ -170,6 +175,70 @@ export default function TeamPage() {
         </div>
       )}
     </main>
+  );
+}
+
+/**
+ * Removing a member revokes their access to the whole studio the moment it
+ * lands, so it confirms first (destructive actions confirm — conventions),
+ * shows a busy state while the mutation is in flight and says what happened.
+ */
+function RemoveMemberButton({
+  membershipId,
+  name,
+}: {
+  membershipId: Id<"memberships">;
+  name: string;
+}) {
+  const removeMember = useMutation(api.studios.removeMember);
+  const [open, setOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger
+        render={
+          <Button variant="ghost" size="sm" className="text-muted-foreground" />
+        }
+      >
+        Remove
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle className="font-display">
+            Remove {name}?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            They lose access to this studio and every production in it right
+            away. Invite them again to bring them back.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={removing}
+            onClick={async () => {
+              setRemoving(true);
+              try {
+                await removeMember({ membershipId });
+                toast.success(`${name} removed from the studio`);
+                setOpen(false);
+              } catch (err) {
+                // Stays open on failure (e.g. "You can't remove yourself") so
+                // the toast reads next to the row it is about.
+                showMutationError(err);
+              } finally {
+                setRemoving(false);
+              }
+            }}
+          >
+            {removing && <Loader2 className="animate-spin" />}
+            Remove member
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

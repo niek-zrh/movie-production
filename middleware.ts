@@ -20,6 +20,40 @@ const authMiddleware = convexAuthNextjsMiddleware(
 );
 
 /**
+ * Hosts this deployment answers on (ALLOWED_HOSTS, comma-separated, entries
+ * with or without a port). Everything below copies the inbound Host header
+ * into the redirect URL, and that header is attacker-controlled: without an
+ * allowlist `Host: evil.example` comes back as
+ * `Location: https://evil.example/sign-in`, with Traefik's host rule as the
+ * only guard. Unset, we trust local development hosts only — so `pnpm dev`
+ * and the Playwright suite (localhost:3000) need no configuration while a
+ * real deployment fails closed.
+ */
+const allowedHosts = (process.env.ALLOWED_HOSTS ?? "")
+  .split(",")
+  .map((h) => h.trim().toLowerCase())
+  .filter((h) => h !== "");
+
+const LOCAL_HOSTNAMES = ["localhost", "127.0.0.1", "[::1]", "0.0.0.0"];
+
+/** Host header minus its port ("pilot.kinolab.ai:443", "[::1]:3000"). */
+function hostnameOf(host: string): string {
+  return host.startsWith("[")
+    ? host.slice(0, host.indexOf("]") + 1)
+    : (host.split(":")[0] ?? host);
+}
+
+function isAllowedHost(host: string): boolean {
+  const lower = host.toLowerCase();
+  const hostname = hostnameOf(lower);
+  // A configured entry matches with or without the port; otherwise only the
+  // local dev hosts are trusted.
+  if (allowedHosts.length > 0)
+    return allowedHosts.includes(lower) || allowedHosts.includes(hostname);
+  return LOCAL_HOSTNAMES.includes(hostname);
+}
+
+/**
  * Behind a TLS-terminating proxy (Cloudflare → Traefik → this container over
  * plain HTTP), Next builds request.url with protocol "http:" while the
  * browser's Origin header says "https:". Convex Auth's /api/auth proxy
@@ -32,7 +66,14 @@ export default function middleware(
   event: NextFetchEvent,
 ) {
   const url = new URL(request.url);
-  const host = request.headers.get("host");
+  const hostHeader = request.headers.get("host");
+  // An unrecognised Host is never reflected back: fall back to the first
+  // configured host so redirects still land on the real site (and to null
+  // when nothing is configured, which leaves the URL untouched below).
+  const host =
+    hostHeader !== null && isAllowedHost(hostHeader)
+      ? hostHeader
+      : (allowedHosts[0] ?? null);
   let changed = false;
 
   // Next standalone can build request.url from its BIND address

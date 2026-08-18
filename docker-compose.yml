@@ -12,6 +12,16 @@
 # the one-shot `convex-deploy` service, IF CONVEX_SELF_HOSTED_ADMIN_KEY is set
 # in the environment (in Dokploy: the compose project's Environment tab).
 # Without the key it logs a skip notice and the frontend deploys as before.
+#
+# The sign-up gate (INVITE_ONLY_SIGNUPS / ALLOW_OPEN_SIGNUPS /
+# ADMIN_SIGNUP_ALLOWLIST) is NOT set here — those are read inside Convex
+# functions, so they live on the backend: `npx convex env set …`. README
+# §"Go-live checklist" has the full list.
+#
+# Traefik entrypoint: `web` (plain HTTP) by default, which is what this
+# server's Traefik has today. Set TRAEFIK_ENTRYPOINT=websecure + TRAEFIK_TLS=1
+# once an entrypoint with a certificate exists — see README §"The Cloudflare →
+# origin hop" for the trade-off.
 
 services:
   convex-deploy:
@@ -44,6 +54,13 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_CONVEX_URL: ${NEXT_PUBLIC_CONVEX_URL:-${NEXT_PUBLIC_DEPLOYMENT_URL:-https://api.kinolab.ai}}
+        # Both origins end up in the Content-Security-Policy (next.config.ts),
+        # which Next bakes in at BUILD time — hence build args, not env.
+        NEXT_PUBLIC_CONVEX_SITE_URL: ${NEXT_PUBLIC_CONVEX_SITE_URL:-https://actions.kinolab.ai}
+        # Comma-separated extra CSP origins; CSP_REPORT_ONLY=1 ships the policy
+        # in report-only mode if something legitimate turns out to be blocked.
+        CSP_EXTRA_ORIGINS: ${CSP_EXTRA_ORIGINS:-}
+        CSP_REPORT_ONLY: ${CSP_REPORT_ONLY:-}
     image: kinolab-frontend
     container_name: kinolab-frontend
     restart: unless-stopped
@@ -53,15 +70,24 @@ services:
       # This deployment is only ever reached via TLS-terminating proxies;
       # the middleware uses this to keep redirect URLs on https.
       FORCE_HTTPS: ${FORCE_HTTPS:-1}
+      # Hosts whose Host header may be reflected into redirect URLs. Without
+      # this an attacker-supplied Host lands in the sign-in redirect Location;
+      # keep it in step with the Traefik rule below (comma-separated).
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-pilot.kinolab.ai}
     networks:
       - dokploy-network
     labels:
       - traefik.enable=true
       - traefik.docker.network=dokploy-network
       - traefik.http.routers.kinolab-frontend.rule=Host(`pilot.kinolab.ai`)
-      - traefik.http.routers.kinolab-frontend.entrypoints=web
+      - traefik.http.routers.kinolab-frontend.entrypoints=${TRAEFIK_ENTRYPOINT:-web}
+      - traefik.http.routers.kinolab-frontend.tls=${TRAEFIK_TLS:-false}
       - traefik.http.routers.kinolab-frontend.service=kinolab-frontend-svc
       - traefik.http.services.kinolab-frontend-svc.loadbalancer.server.port=8090
+      # With a websecure entrypoint that uses Let's Encrypt, ALSO add (an empty
+      # certresolver value makes Traefik drop the router, so this cannot be an
+      # env var with a blank default):
+      # - traefik.http.routers.kinolab-frontend.tls.certresolver=letsencrypt
     # HEALTHCHECK is inherited from the Dockerfile (hits /api/health on 8090).
 
 networks:

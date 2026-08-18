@@ -33,6 +33,73 @@ function firstErrorLine(message: string): string {
   return line.length > 0 ? line : "Something didn't work — try again";
 }
 
+// Grid cards and the filmstrip render well under 320 CSS px, so 640 covers 2x
+// screens; the Review Room compare canvas still loads the full file.
+const THUMB_MAX_EDGE = 640;
+const THUMB_QUALITY = 0.82; // high enough to judge a still, ~1% of the original
+/** Only rasters every browser can decode — SVG, video and PDF get no thumb. */
+const THUMBABLE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+
+/**
+ * canvas.toBlob is callback-based and silently falls back to image/png when it
+ * cannot encode the requested type — compare the type back to detect that.
+ */
+function encodeCanvas(
+  canvas: HTMLCanvasElement,
+  type: string,
+): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    canvas.toBlob(
+      (blob) => resolve(blob !== null && blob.type === type ? blob : null),
+      type,
+      THUMB_QUALITY,
+    );
+  });
+}
+
+/**
+ * Downscaled stand-in for the upload. Without one, addFromUpload registers an
+ * image as its own thumbnail (CONTRACTS.md §versions), so a 200-shot grid pulls
+ * 200 full-size stills — multiple GB for the AI frames this product compares.
+ * Best-effort by design: null means "upload exactly as before".
+ */
+async function makeThumbnail(file: File): Promise<Blob | null> {
+  if (!THUMBABLE_TYPES.has(file.type)) return null;
+  if (typeof createImageBitmap !== "function") return null;
+  let bitmap: ImageBitmap | undefined;
+  try {
+    // from-image so a phone photo's EXIF rotation survives into the thumbnail.
+    bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const scale = Math.min(
+      1, // never upscale — a tiny still stays its own size
+      THUMB_MAX_EDGE / Math.max(bitmap.width, bitmap.height),
+    );
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const blob =
+      (await encodeCanvas(canvas, "image/webp")) ??
+      (await encodeCanvas(canvas, "image/jpeg"));
+    // A "thumbnail" no smaller than the source isn't worth a second round-trip.
+    if (blob === null || blob.size >= file.size) return null;
+    return blob;
+  } catch {
+    return null;
+  } finally {
+    bitmap?.close();
+  }
+}
+
 type UploadState = "uploading" | "done" | "error";
 type UploadItem = { key: string; name: string; state: UploadState };
 
@@ -48,8 +115,8 @@ const EMPTY_META: PromptMetaDraft = { tool: "", model: "", prompt: "", seed: "" 
 /**
  * Card-sized uploader for shot options (spec F6). Accepts drag-drop, paste
  * (while mounted) and click-to-browse. Each file: generateUploadUrl → POST
- * bytes → addFromUpload. Optional prompt metadata applies to the next
- * upload(s) until cleared.
+ * bytes → the same pair again for a downscaled thumbnail → addFromUpload.
+ * Optional prompt metadata applies to the next upload(s) until cleared.
  */
 export function UploadDropzone({
   productionId,
@@ -102,6 +169,27 @@ export function UploadDropzone({
         const { storageId } = (await res.json()) as {
           storageId: Id<"_storage">;
         };
+        // Second trip through the same signed-URL flow, after the original is
+        // safely stored — a thumbnail must never cost us the upload.
+        let thumbStorageId: Id<"_storage"> | undefined;
+        const thumb = await makeThumbnail(file);
+        if (thumb !== null) {
+          try {
+            const thumbUrl = await generateUploadUrl({ productionId });
+            const thumbRes = await fetch(thumbUrl, {
+              method: "POST",
+              headers: { "Content-Type": thumb.type },
+              body: thumb,
+            });
+            if (thumbRes.ok) {
+              ({ storageId: thumbStorageId } = (await thumbRes.json()) as {
+                storageId: Id<"_storage">;
+              });
+            }
+          } catch {
+            // Stay silent: addFromUpload falls back to the full-size storageId.
+          }
+        }
         const promptMeta = metaSet
           ? {
               tool: meta.tool.trim() || undefined,
@@ -113,6 +201,7 @@ export function UploadDropzone({
         await addFromUpload({
           shotId,
           storageId,
+          thumbStorageId,
           name: file.name,
           mimeType: file.type || undefined,
           sizeBytes: file.size,

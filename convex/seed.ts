@@ -1,5 +1,9 @@
 import { v } from "convex/values";
-import { action, internalMutation, internalQuery } from "./_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { formatInTimeZone } from "date-fns-tz";
@@ -10,6 +14,12 @@ import { role as roleValidator } from "./schema";
  * Idempotent demo seed (spec §12): studio Aurora North, production SIGNAL
  * LOST, 14 shots, placeholder options, activity, a report, QC template.
  * Run: npx convex run seed:run
+ *
+ * `run` is an internalAction, never a public one: a public seed is callable
+ * anonymously over HTTP, and this seed writes a studio, ~50 stored blobs and
+ * claimable pending invites (including an OWNER invite), which would hand a
+ * stranger an account and defeat the invite-only sign-up gate. `npx convex
+ * run` reaches internal functions, so the documented workflow is unchanged.
  *
  * Placeholder art is generated as SVG (gradient + burned-in shot code) with
  * zero dependencies and no network (DECISIONS.md). Activity rows carry
@@ -161,7 +171,7 @@ export const alreadySeeded = internalQuery({
   },
 });
 
-export const run = action({
+export const run = internalAction({
   args: {},
   handler: async (ctx): Promise<string> => {
     if (await ctx.runQuery(internal.seed.alreadySeeded, {})) {
@@ -338,6 +348,11 @@ export const insertAll = internalMutation({
         status: spec.status,
         stage: spec.stage,
         order: shotOrder,
+        // Denormalised (schema.shots.versionsCount) — shots.list reads it
+        // instead of counting versions, so the seeded demo would otherwise
+        // show "0 options" on every card. The loop below inserts exactly
+        // spec.versions of them.
+        versionsCount: spec.versions,
         ...(spec.assignee ? { assigneeId: u(spec.assignee) } : {}),
         ...(spec.due !== undefined
           ? {

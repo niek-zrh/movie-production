@@ -78,6 +78,23 @@ const stageInstanceStatus = v.union(
   v.literal("done"),
 );
 
+/**
+ * Timezones are checked against the runtime (Intl throws a RangeError on an
+ * unknown zone) rather than a hardcoded list, so any IANA name the deployment
+ * supports is accepted. An invalid zone stored here poisons every date-fns-tz
+ * call downstream — it used to abort the hourly reports.cronTick for the whole
+ * deployment — so it must never reach the database.
+ */
+function assertValidTimezone(timezone: string): void {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+  } catch {
+    throw new ConvexError(
+      `"${timezone}" is not a valid timezone. Use an IANA name like Europe/Zurich or Europe/Moscow.`,
+    );
+  }
+}
+
 const STAGE_STATUS_LABEL: Record<
   Doc<"stageInstances">["status"],
   string
@@ -118,6 +135,7 @@ export const create = mutation({
       throw new ConvexError(`Code ${code} is already used in this studio`);
 
     const timezone = args.timezone?.trim() || "Europe/Zurich";
+    assertValidTimezone(timezone);
 
     const productionId = await ctx.db.insert("productions", {
       studioId: args.studioId,
@@ -241,6 +259,7 @@ export const update = mutation({
     if (args.timezone !== undefined) {
       timezone = args.timezone.trim();
       if (timezone.length === 0) throw new ConvexError("Timezone cannot be empty");
+      assertValidTimezone(timezone);
       if (timezone !== production.timezone)
         changes.push(`timezone → ${timezone}`);
       else timezone = undefined;

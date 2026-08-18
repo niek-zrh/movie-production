@@ -98,7 +98,14 @@ export const requestGateSignoff = mutation({
       throw new ConvexError("Set gate approvers in production settings first");
     }
 
-    await ctx.db.patch(stageInstance._id, { gateStatus: "requested" });
+    // A fresh request reopens the gate, so the stage may no longer read as
+    // complete: invariant — status "done" only while gateStatus is "approved"
+    // (CONTRACTS.md approvals.ts). Re-requesting after an approval takes the
+    // stage back to "active"; other statuses are left untouched.
+    await ctx.db.patch(stageInstance._id, {
+      gateStatus: "requested",
+      ...(stageInstance.status === "done" ? { status: "active" as const } : {}),
+    });
 
     const existing = await ctx.db
       .query("approvals")
@@ -158,6 +165,21 @@ export const decideGate = mutation({
     if (!canDecideGate(member, stageInstance, userId)) {
       throw new PermissionError("You are not an approver for this gate");
     }
+    // A decided gate is closed: a second approver must not silently overturn
+    // the first (CONTRACTS.md approvals.ts). Reopening is explicit — a fresh
+    // `requestGateSignoff` puts the gate back to "requested".
+    if (
+      stageInstance.gateStatus === "approved" ||
+      stageInstance.gateStatus === "rejected"
+    ) {
+      const decider =
+        stageInstance.gateDecidedBy !== undefined
+          ? await actorName(ctx, stageInstance.gateDecidedBy)
+          : "Someone";
+      throw new ConvexError(
+        `${decider} already ${stageInstance.gateStatus} this gate — request sign-off again before deciding`,
+      );
+    }
     const note = args.note?.trim() ? args.note.trim() : undefined;
     if (args.decision === "rejected" && note === undefined) {
       throw new ConvexError("A note is required when rejecting a gate");
@@ -169,8 +191,14 @@ export const decideGate = mutation({
       gateDecidedBy: userId,
       gateDecidedAt: now,
       gateNote: note,
-      // Approving a gate also completes the stage (CONTRACTS.md).
-      ...(args.decision === "approved" ? { status: "done" as const } : {}),
+      // Approving a gate also completes the stage (CONTRACTS.md); a rejection
+      // takes a completed stage back to "active" — same invariant as above, a
+      // stage never reads "done" on a gate that is not approved.
+      ...(args.decision === "approved"
+        ? { status: "done" as const }
+        : stageInstance.status === "done"
+          ? { status: "active" as const }
+          : {}),
     });
 
     const name = await actorName(ctx, userId);

@@ -67,3 +67,68 @@ export const feed = query({
     return enriched;
   },
 });
+
+/**
+ * Rows for a single target, newest first. The shot detail History tab used to
+ * pull the last 100 production-wide rows and filter them in JS, so on any real
+ * production a shot's own history was never inside that window (spec F6).
+ *
+ * A shot's history also lives on its versions — version.added / .picked /
+ * .rejected target the version, not the shot — so for targetType "shot" we
+ * also read the shot's newest options and merge. Reads stay bounded: at most
+ * MAX_VERSION_FANOUT + 1 index ranges of `limit` rows each, well under the
+ * 4,096-document ceiling.
+ */
+const MAX_VERSION_FANOUT = 30;
+
+export const forTarget = query({
+  args: {
+    productionId: v.id("productions"),
+    targetType: v.string(),
+    targetId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    await assertMemberForProduction(ctx, args.productionId);
+    const limit = Math.max(1, Math.min(Math.floor(args.limit ?? 50), 100));
+
+    const targets: { targetType: string; targetId: string }[] = [
+      { targetType: args.targetType, targetId: args.targetId },
+    ];
+    if (args.targetType === "shot") {
+      const shotId = ctx.db.normalizeId("shots", args.targetId);
+      if (shotId !== null) {
+        const versions = await ctx.db
+          .query("versions")
+          .withIndex("by_shot", (q) => q.eq("shotId", shotId))
+          .order("desc")
+          .take(MAX_VERSION_FANOUT);
+        for (const version of versions)
+          targets.push({ targetType: "version", targetId: version._id });
+      }
+    }
+
+    const rows: Doc<"activity">[] = [];
+    for (const target of targets) {
+      const found = await ctx.db
+        .query("activity")
+        .withIndex("by_target", (q) =>
+          q.eq("targetType", target.targetType).eq("targetId", target.targetId),
+        )
+        .order("desc")
+        .take(limit);
+      // targetId is a bare string on this table — never return a row from a
+      // production the caller isn't a member of.
+      for (const row of found)
+        if (row.productionId === args.productionId) rows.push(row);
+    }
+    rows.sort((a, b) => b._creationTime - a._creationTime);
+
+    const cache = new Map<Id<"users">, UserRef>();
+    const enriched: (Doc<"activity"> & { actor: UserRef })[] = [];
+    for (const row of rows.slice(0, limit)) {
+      enriched.push({ ...row, actor: await getUserRef(ctx, cache, row.actorId) });
+    }
+    return enriched;
+  },
+});

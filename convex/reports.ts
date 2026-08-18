@@ -35,6 +35,23 @@ function localDate(timezone: string, ts: number): string {
 }
 
 /**
+ * date-fns-tz throws a RangeError on a zone it does not know, which surfaces
+ * as a bare "Server Error". Timezones are validated on write now
+ * (productions.create/update), but rows written before that can still hold a
+ * bad one, so every single-production path checks the zone up front and
+ * reports it in plain language instead.
+ */
+function assertUsableTimezone(production: Doc<"productions">): void {
+  try {
+    formatInTimeZone(Date.now(), production.timezone, "yyyy-MM-dd");
+  } catch {
+    throw new ConvexError(
+      `Production "${production.name}" has an invalid timezone ("${production.timezone}"). A producer can fix it in production settings.`,
+    );
+  }
+}
+
+/**
  * All activity rows of a production whose _creationTime falls on local date
  * `date` in the production's timezone, oldest first. Filtering every row
  * through formatInTimeZone is the simplest correct day-window computation at
@@ -136,6 +153,7 @@ export const generateForDate = internalMutation({
   handler: async (ctx, args) => {
     const production = await ctx.db.get(args.productionId);
     if (!production) return null;
+    assertUsableTimezone(production);
     await generateReportForDate(ctx, production, args.date);
     return null;
   },
@@ -145,6 +163,11 @@ export const generateForDate = internalMutation({
  * Hourly cron. For every active production past 18:00 local time, ensure
  * today's report exists — generated once, then left alone (regeneration is a
  * human action via generateNow).
+ *
+ * Every production is isolated: one unusable timezone (or any other per-row
+ * failure) used to throw out of the shared handler and abort the tick for the
+ * whole deployment, so nobody got a report, every hour, silently. A failing
+ * production is logged with enough identity to fix it and the loop continues.
  */
 export const cronTick = internalMutation({
   args: {},
@@ -153,12 +176,19 @@ export const cronTick = internalMutation({
     const productions = await ctx.db.query("productions").collect();
     for (const production of productions) {
       if (production.status !== "active") continue;
-      const hour = Number(formatInTimeZone(now, production.timezone, "HH"));
-      if (hour < 18) continue;
-      const today = localDate(production.timezone, now);
-      const existing = await reportForDate(ctx, production._id, today);
-      if (existing) continue;
-      await generateReportForDate(ctx, production, today);
+      try {
+        const hour = Number(formatInTimeZone(now, production.timezone, "HH"));
+        if (hour < 18) continue;
+        const today = localDate(production.timezone, now);
+        const existing = await reportForDate(ctx, production._id, today);
+        if (existing) continue;
+        await generateReportForDate(ctx, production, today);
+      } catch (error) {
+        console.error(
+          `reports.cronTick: skipped production ${production.code} "${production.name}" (${production._id}, timezone "${production.timezone}")`,
+          error,
+        );
+      }
     }
     return null;
   },
@@ -172,6 +202,7 @@ export const generateNow = mutation({
       args.productionId,
       "report.publish",
     );
+    assertUsableTimezone(production);
     const today = localDate(production.timezone, Date.now());
     const { reportId, frozen } = await generateReportForDate(
       ctx,
@@ -251,12 +282,22 @@ export const get = query({
       ctx,
       report.productionId,
     );
-    const rows = await activityForLocalDate(
-      ctx,
-      production._id,
-      production.timezone,
-      report.date,
-    );
+    assertUsableTimezone(production);
+    // Invariant: the day list and the stat tiles must describe the same window.
+    // A published report is frozen (CONTRACTS.md) and its stats were computed
+    // at `generatedAt`, so the list is bounded there too — otherwise the list
+    // keeps growing next to tiles that no longer count it. An unpublished
+    // report is still live, so it shows the whole day.
+    const cutoff =
+      report.publishedBy !== undefined ? report.generatedAt : Infinity;
+    const rows = (
+      await activityForLocalDate(
+        ctx,
+        production._id,
+        production.timezone,
+        report.date,
+      )
+    ).filter((row) => row._creationTime <= cutoff);
     rows.sort((a, b) => a._creationTime - b._creationTime); // oldest first
     const cache = new Map<Id<"users">, UserRef>();
     const dayActivity: (Doc<"activity"> & { actor: UserRef })[] = [];

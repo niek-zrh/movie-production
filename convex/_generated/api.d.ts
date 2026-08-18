@@ -24,6 +24,7 @@ import type * as lib_domain from "../lib/domain.js";
 import type * as lib_google from "../lib/google.js";
 import type * as lib_notify from "../lib/notify.js";
 import type * as lib_permissions from "../lib/permissions.js";
+import type * as migrations from "../migrations.js";
 import type * as notifications from "../notifications.js";
 import type * as productions from "../productions.js";
 import type * as qc from "../qc.js";
@@ -59,6 +60,7 @@ declare const fullApi: ApiFromModules<{
   "lib/google": typeof lib_google;
   "lib/notify": typeof lib_notify;
   "lib/permissions": typeof lib_permissions;
+  migrations: typeof migrations;
   notifications: typeof notifications;
   productions: typeof productions;
   qc: typeof qc;

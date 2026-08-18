@@ -4,6 +4,7 @@ import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Check, Star, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,6 +16,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { canonicalApprovedName } from "@/convex/lib/domain";
 import { copy } from "@/lib/copy";
+import { cn } from "@/lib/utils";
 import {
   extensionOf,
   firstErrorLine,
@@ -43,13 +45,14 @@ export function PickDialog({
   const pick = useMutation(api.versions.pick);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  const confirmRef = useRef<HTMLButtonElement>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
 
-  // Autofocus the confirm button so Enter picks without touching the mouse.
+  // Focus the note, not the confirm button: with the button focused the first
+  // space typed into "why this one" activated it and picked with no note.
   useEffect(() => {
     if (!open) return;
     setNote("");
-    const id = window.setTimeout(() => confirmRef.current?.focus(), 60);
+    const id = window.setTimeout(() => noteRef.current?.focus(), 60);
     return () => window.clearTimeout(id);
   }, [open]);
 
@@ -107,15 +110,18 @@ export function PickDialog({
         </div>
 
         <Textarea
+          ref={noteRef}
           value={note}
           onChange={(e) => setNote(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
+            // Plain Enter/Space type into the note; only ⌘/Ctrl+Enter picks,
+            // so the note is never lost mid-sentence to an accidental submit.
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
               void confirm();
             }
           }}
-          placeholder="Why this one? (optional)"
+          placeholder="Why this one? (optional) — ⌘↵ picks"
           className="text-sm"
         />
 
@@ -124,7 +130,6 @@ export function PickDialog({
             Cancel
           </Button>
           <Button
-            ref={confirmRef}
             disabled={busy}
             className="bg-tape text-tape-foreground hover:bg-tape/85"
             onClick={() => void confirm()}
@@ -211,5 +216,57 @@ export function RejectDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Clickable Pick / Shortlist / Reject for the focused version. Keyboard-first
+ * (spec §9.3) was keyboard-ONLY here: api.versions.pick had no button anywhere
+ * in the product. Same handlers as the hotkeys — no second mutation path.
+ */
+export function DecisionActions({
+  version,
+  onShortlist,
+  onReject,
+  onPick,
+  className,
+}: {
+  version: VersionCard;
+  onShortlist: () => void;
+  onReject: () => void;
+  onPick: () => void;
+  className?: string;
+}) {
+  const shortlisted = version.status === "shortlisted";
+  return (
+    <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
+      <Button
+        size="sm"
+        className="bg-tape text-tape-foreground hover:bg-tape/85"
+        onClick={onPick}
+        title="Pick this version (P)"
+      >
+        <Check />
+        Pick
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onShortlist}
+        title={shortlisted ? "Remove from shortlist (S)" : "Shortlist (S)"}
+      >
+        <Star className={cn(shortlisted && "fill-current")} />
+        {shortlisted ? "Unshortlist" : copy.actions.shortlist}
+      </Button>
+      <Button
+        variant="destructive"
+        size="sm"
+        onClick={onReject}
+        title="Reject (X)"
+      >
+        <X />
+        {copy.actions.reject}
+      </Button>
+    </div>
   );
 }

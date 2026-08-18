@@ -87,10 +87,9 @@ async function bulkCreateShotsLocal(page: Page, base: string, codes: string[]) {
  * Generate now → tiles; Publish → frozen + badge; Generate again → error
  * toast; a second member sees the "report published" bell notification.
  *
- * Rejections tile: reports.ts counts activity type "version.rejected".
- * A pick supersedes siblings by patching their status WITHOUT logging a
- * version.rejected activity row (convex/versions.ts pick), so the tile
- * stays 0 for a superseding pick.
+ * Rejections tile: reports.ts counts activity type "version.rejected", and a
+ * pick logs one such row per superseded sibling (convex/versions.ts pick), so
+ * a superseding pick of 2 options reports 1 rejection.
  */
 test.describe.serial("daily reports", () => {
   let ownerContext: BrowserContext;
@@ -201,8 +200,10 @@ test.describe.serial("daily reports", () => {
     await expect(tileValue("Versions added")).toHaveText("2");
     await expect(tileValue("Picks")).toHaveText("1");
     await expect(tileValue("Gates decided")).toHaveText("1");
-    // Superseded rejections log no version.rejected activity → tile stays 0.
-    await expect(tileValue("Rejections")).toHaveText("0");
+    // Picking v2 supersedes v1, and a supersede now logs a version.rejected
+    // activity row like a manual reject does — otherwise the day's Rejections
+    // read 0 while dozens of options were actually killed.
+    await expect(tileValue("Rejections")).toHaveText("1");
   });
 
   test("Publish freezes the report and shows the published badge", async () => {

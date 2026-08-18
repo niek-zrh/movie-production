@@ -11,21 +11,28 @@ import { copy } from "@/lib/copy";
 import { formatWhen } from "@/lib/format";
 
 /**
- * Shot history (spec F6): the production activity feed filtered client-side
- * to rows targeting this shot or mentioning its code in the summary.
+ * Shot history (spec F6): the activity rows of this shot and its options,
+ * queried by target. It used to filter the last 100 production-wide rows
+ * client-side, which meant an empty tab on any production busy enough for the
+ * shot's own rows to fall outside that window.
  */
 export function HistoryTab({
   productionId,
   shotId,
-  shotCode,
 }: {
   productionId: Id<"productions">;
   shotId: Id<"shots">;
-  shotCode: string;
+  /** Still accepted from the shot page; the rows are matched by target now. */
+  shotCode?: string;
 }) {
-  const feed = useQuery(api.activity.feed, { productionId, limit: 100 });
+  const rows = useQuery(api.activity.forTarget, {
+    productionId,
+    targetType: "shot",
+    targetId: shotId,
+    limit: 100,
+  });
 
-  if (feed === undefined) {
+  if (rows === undefined) {
     return (
       <div className="max-w-2xl space-y-2">
         <Skeleton className="h-10" />
@@ -34,10 +41,6 @@ export function HistoryTab({
       </div>
     );
   }
-
-  const rows = feed.filter(
-    (row) => row.targetId === shotId || row.summary.includes(shotCode),
-  );
 
   if (rows.length === 0) {
     return <EmptyState icon={<History />} title={copy.empty.activity} />;

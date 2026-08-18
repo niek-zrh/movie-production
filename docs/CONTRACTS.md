@@ -84,10 +84,12 @@ Enriched shot shape `ShotCard`:
 `{ ...shot, assignee: UserRef | null, scene: { _id, code, title? } | null, episode: { _id, number } | null, versionsCount: number, coverThumbUrl: string | null }`
 (coverThumbUrl: coverAssetId → asset.thumbStorageId → `ctx.storage.getUrl`; else null)
 
-- `list` (query): `{ productionId, status?, stage?, sceneId?, assigneeId?, episodeId? }` → `ShotCard[]` ordered by `order`. All filters optional & combinable (filter in JS after index query by production).
+- `list` (query): `{ productionId, status?, stage?, sceneId?, assigneeId?, episodeId? }` → `ShotCard[]` ordered by `order`. All filters optional & combinable, applied while streaming the index (never a full `.collect()` — a production past ~4k shots used to blow Convex's 4,096-document read limit and take the Shots page, Board and Overview down with it). Caps at `MAX_LIST_SHOTS` (1000); the Shots page says so when it hits the cap. `versionsCount` is read from the denormalised field on the shot, never by counting versions.
 - `get` (query): `{ shotId }` → `ShotCard & { production: { _id, name, code, timezone }, pickedVersionIndex: number | null, driveFolderId?: string }`.
 - `create` (mutation): `{ productionId, code, title?, sceneId?, episodeId?, stage?, assigneeId?, dueDate? }` perm `content.edit`. Unique code per production. Default stage "production", status "planned", order max+1. Activity `shot.created`.
-- `bulkCreate` (mutation): `{ productionId, codes: string[], sceneId?, episodeId? }` → `{ created: number, skipped: string[] }`. Perm `content.edit`. Trims, uppercases, dedupes, skips existing. ONE activity row ("Niek created 12 shots").
+- `bulkCreate` (mutation): `{ productionId, codes: string[], sceneId?, episodeId? }` → `{ created: number, skipped: string[] }`. Perm `content.edit`. Trims, uppercases, dedupes, skips existing. ONE activity row ("Niek created 12 shots"). Max 500 codes per call, code ≤ 64 chars, title ≤ 200 — an uncapped paste used to be unrecoverable because nothing could be deleted.
+- `remove` (mutation): `{ shotId }` perm `content.edit`; refuses when the shot has versions or a pick (mirrors `scenes.remove`). Deletes the shot's dangling comments/assets, never its activity rows (reports count on them). ONE activity row.
+- `bulkRemove` (mutation): `{ shotIds: Id<"shots">[] }` (max 500) — same per-shot safety rule, so a mis-paste can actually be undone.
 - `update` (mutation): `{ shotId, title?, sceneId?, assigneeId?, dueDate?, order?, episodeId? }`. Permission `canEditShot`. Activity `shot.updated` (summarize what changed). If assignee changed → notify new assignee (`shot_assigned`).
 - `setStatus` (mutation): `{ shotId, status }`. Permission `canEditShot(member, shot, userId, status)`. Invariants (spec §6): → `approved` requires `pickedVersionId`; → `delivered` requires the production's delivery stageInstance gateStatus !== "rejected". Activity `shot.status_changed` ("Anna moved SC010_SH020 to In review").
 - `setStage` (mutation): `{ shotId, stage }`. Perm `content.edit`. Activity `shot.stage_changed`.
@@ -107,7 +109,7 @@ Enriched `VersionCard`:
   unset. Auto-moves shot planned/generating → options_ready (activity
   `shot.status_changed` by createdBy). Activity `version.added`.
 - `generateUploadUrl` (mutation): `{ productionId }` → string. Perm `version.create`.
-- `addFromUpload` (mutation): `{ shotId, storageId: Id<"_storage">, name, mimeType?, sizeBytes?, promptMeta?, note? }` → `{ versionId, index }`. Perm `version.create` + calls the same code path as `createWithAsset` (thumbStorageId = storageId when mimeType starts with "image/"). If the production has a connected hub, ALSO schedule `internal.drive.mirrorUploadToHub` with the new versionId (runAfter 0) — guard with try/catch so absence never breaks upload.
+- `addFromUpload` (mutation): `{ shotId, storageId: Id<"_storage">, name, mimeType?, sizeBytes?, promptMeta?, note?, thumbStorageId? }` → `{ versionId, index }`. Perm `version.create` + calls the same code path as `createWithAsset` (thumbStorageId = the caller's downscaled thumbnail when supplied — the upload dropzone makes one in-browser — else storageId when mimeType starts with "image/"). If the production has a connected hub, ALSO schedule `internal.drive.mirrorUploadToHub` with the new versionId (runAfter 0) — guard with try/catch so absence never breaks upload.
 - `shortlist` (mutation): `{ versionId }` → toggles candidate↔shortlisted. Permission `canDecideForShot`. Activity `version.shortlisted`.
 - `reject` (mutation): `{ versionId, note? }`. Permission `canDecideForShot`. Sets rejected + decidedBy/At/decisionNote. Activity `version.rejected`.
 - `unreject` (mutation): `{ versionId }` → back to candidate (only if shot not picked with this superseded). Permission `canDecideForShot`.
@@ -132,15 +134,19 @@ Enriched `VersionCard`:
 ## approvals.ts
 
 - `requestGateSignoff` (mutation): `{ stageInstanceId }`. Perm: any member with
-  `content.edit` OR `production.manage`. Requires `gateApproverIds` non-empty
+  `content.edit` OR `production.manage`. Reopening a completed stage resets its
+  status to "active" (see the invariant under `decideGate`). Requires `gateApproverIds` non-empty
   (error "Set gate approvers in production settings first"). Sets gateStatus
   "requested"; creates one pending approvals row per approver
   `{ scope: "stage_gate", targetId: stageInstanceId }` (skip existing
   pending); notifies approvers (`approval_requested`). Activity `gate.requested`.
 - `decideGate` (mutation): `{ stageInstanceId, decision: "approved"|"rejected", note?: string }`.
-  Note REQUIRED when rejecting. Permission `canDecideGate`. Patches
+  Note REQUIRED when rejecting. Permission `canDecideGate`. Refuses when the
+  gate was already decided (a fresh `requestGateSignoff` reopens it). Patches
   stageInstance (gateStatus, gateDecidedBy/At/Note); approve → stage status
-  "done". Updates this approver's pending row (or inserts a decided row if
+  "done". INVARIANT: a stage reads "done" only while its gate is `approved` —
+  a rejection, or a fresh sign-off request, takes a completed stage back to
+  "active". Updates this approver's pending row (or inserts a decided row if
   none) and resolves all other pending rows for the target with the same
   decision + note "decided by {name}". Activity `gate.approved`/`gate.rejected`.
   Notify the members who requested + production producers (`gate_decided`).
@@ -224,4 +230,4 @@ hourly `reports.cronTick`; every 5 min `drive.cronSync`.
 
 ## seed.ts (owned by the integrator)
 
-`seed:run` — idempotent §12 dataset.
+`seed:run` — idempotent §12 dataset. **`internalAction`**, not public: as a public action it was callable anonymously against the deployment URL and planted claimable owner/producer invites. Run it with `npx convex run seed:run` (which reaches internal functions), and only on a demo backend.
