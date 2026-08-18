@@ -1,5 +1,6 @@
 # Run the Kinolab Next.js frontend behind Traefik/Dokploy at
-# https://app.kinolab.ai. No host ports are published; Traefik reaches the
+# https://pilot.kinolab.ai, against the self-hosted Convex backend at
+# https://api.pilot.kinolab.ai (HTTP actions: https://actions.pilot.kinolab.ai). No host ports are published; Traefik reaches the
 # container over the internal dokploy-network.
 #
 #   docker compose up -d --build
@@ -24,7 +25,7 @@ services:
     # exits. Must NOT auto-restart, or a failed push would retry forever.
     restart: "no"
     environment:
-      CONVEX_SELF_HOSTED_URL: ${CONVEX_SELF_HOSTED_URL:-https://api.kinolab.ai}
+      CONVEX_SELF_HOSTED_URL: ${CONVEX_SELF_HOSTED_URL:-${NEXT_PUBLIC_DEPLOYMENT_URL:-https://api.pilot.kinolab.ai}}
       # Never commit this: set it in Dokploy's Environment (or the host shell).
       CONVEX_SELF_HOSTED_ADMIN_KEY: ${CONVEX_SELF_HOSTED_ADMIN_KEY:-}
     networks:
@@ -42,19 +43,19 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_CONVEX_URL: ${NEXT_PUBLIC_CONVEX_URL:-https://api.kinolab.ai}
+        NEXT_PUBLIC_CONVEX_URL: ${NEXT_PUBLIC_CONVEX_URL:-${NEXT_PUBLIC_DEPLOYMENT_URL:-https://api.pilot.kinolab.ai}}
     image: kinolab-frontend
     container_name: kinolab-frontend
     restart: unless-stopped
     environment:
       # Read at runtime by any server-rendered route.
-      NEXT_PUBLIC_CONVEX_URL: ${NEXT_PUBLIC_CONVEX_URL:-https://api.kinolab.ai}
+      NEXT_PUBLIC_CONVEX_URL: ${NEXT_PUBLIC_CONVEX_URL:-${NEXT_PUBLIC_DEPLOYMENT_URL:-https://api.pilot.kinolab.ai}}
     networks:
       - dokploy-network
     labels:
       - traefik.enable=true
       - traefik.docker.network=dokploy-network
-      - traefik.http.routers.kinolab-frontend.rule=Host(`app.kinolab.ai`)
+      - traefik.http.routers.kinolab-frontend.rule=Host(`pilot.kinolab.ai`)
       - traefik.http.routers.kinolab-frontend.entrypoints=web
       - traefik.http.routers.kinolab-frontend.service=kinolab-frontend-svc
       - traefik.http.services.kinolab-frontend-svc.loadbalancer.server.port=8090
