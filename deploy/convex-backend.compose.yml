@@ -1,0 +1,69 @@
+# Kinolab self-hosted Convex backend + dashboard (Dokploy/Traefik).
+# Runs alongside the Corticum backend on the same server — isolation comes
+# from unique Traefik router/service names (kinolab-*), unique hostnames and
+# a unique dashboard host port. Deploy as its OWN Dokploy compose project so
+# the convex-data volume gets its own project prefix.
+#
+# The .env next to this file must contain at least:
+#   INSTANCE_NAME=kinolab
+#   INSTANCE_SECRET=<generate once, keep stable — admin keys derive from it>
+#   CONVEX_CLOUD_ORIGIN=https://api.kinolab.ai
+#   CONVEX_SITE_ORIGIN=https://actions.kinolab.ai
+#   NEXT_PUBLIC_DEPLOYMENT_URL=https://api.kinolab.ai   # dashboard → backend
+#
+# Admin key (for the app compose's CONVEX_SELF_HOSTED_ADMIN_KEY):
+#   docker compose exec kinolab-convex-backend ./generate_admin_key.sh
+#
+# Dashboard: bound to localhost only — reach it via SSH tunnel:
+#   ssh -L 6792:127.0.0.1:6792 <rock>   →   http://localhost:6792
+
+services:
+  kinolab-convex-backend:
+    image: ghcr.io/get-convex/convex-backend:latest
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    env_file:
+      - .env
+    volumes:
+      - convex-data:/convex/data
+    healthcheck:
+      test: curl -f http://localhost:3210/version
+      interval: 5s
+      start_period: 30s
+      retries: 5
+    networks:
+      - dokploy-network
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - traefik.http.routers.kinolab-convex-cloud.rule=Host(`api.kinolab.ai`)
+      - traefik.http.routers.kinolab-convex-cloud.entrypoints=web
+      - traefik.http.routers.kinolab-convex-cloud.service=kinolab-convex-cloud-svc
+      - traefik.http.services.kinolab-convex-cloud-svc.loadbalancer.server.port=3210
+      - traefik.http.routers.kinolab-convex-site.rule=Host(`actions.kinolab.ai`)
+      - traefik.http.routers.kinolab-convex-site.entrypoints=web
+      - traefik.http.routers.kinolab-convex-site.service=kinolab-convex-site-svc
+      - traefik.http.services.kinolab-convex-site-svc.loadbalancer.server.port=3211
+
+  kinolab-convex-dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:latest
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:6792:6791"
+    depends_on:
+      kinolab-convex-backend:
+        condition: service_healthy
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  convex-data:
