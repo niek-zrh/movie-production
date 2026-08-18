@@ -4,7 +4,7 @@
  */
 export const copy = {
   appName: "Kinolab",
-  tagline: "Files live in Drive. Decisions live here.",
+  tagline: "From forty generations to one approved shot.",
 
   nav: {
     overview: "Overview",

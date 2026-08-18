@@ -4,7 +4,8 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
-import { Check, ChevronsUpDown, Clapperboard, LogOut, Search, Users } from "lucide-react";
+import { Check, ChevronsUpDown, LogOut, Search, Users } from "lucide-react";
+import { KinolabMark } from "./kinolab-mark";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -62,10 +63,10 @@ function Shell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-40 flex h-12 shrink-0 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur">
         <Link
           href="/"
-          className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground"
+          className="flex size-7 shrink-0 items-center justify-center"
           aria-label="Kinolab home"
         >
-          <Clapperboard className="size-4" />
+          <KinolabMark className="size-6" />
         </Link>
         <DropdownMenu>
           <DropdownMenuTrigger

@@ -119,7 +119,7 @@ function Pane({
 }) {
   const isImage = isImageVersion(version);
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#0E0F12]">
+    <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       <div
         className={cn(
           "z-10 flex h-7 shrink-0 items-center gap-2 border-b border-white/5 bg-black/30 px-2.5",

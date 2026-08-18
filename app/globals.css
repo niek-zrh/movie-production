@@ -5,10 +5,10 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-sans: var(--font-inter);
-    --font-display: var(--font-space-grotesk);
-    --font-mono: var(--font-jetbrains-mono);
-    --font-heading: var(--font-space-grotesk);
+    --font-sans: var(--font-archivo);
+    --font-display: var(--font-archivo);
+    --font-mono: var(--font-martian-mono);
+    --font-heading: var(--font-archivo);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,14 +48,14 @@
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
 
-    /* Slate tokens (spec §9.2) */
+    /* Kinolab brand tokens (kinolab.ai) */
     --color-tape: var(--tape);
-    --color-tape-foreground: #ffffff;
+    --color-tape-foreground: #16181d;
     --color-status-planned: #8a8f98;
     --color-status-generating: #b58900;
     --color-status-options_ready: #2e7de1;
     --color-status-in_review: #7048e8;
-    --color-status-picked: #ff4d00;
+    --color-status-picked: #ff6b2c;
     --color-status-approved: #1f9d55;
     --color-status-rework: #d97706;
     --color-status-final: #0f766e;
@@ -63,78 +63,79 @@
     --color-status-killed: #991b1b;
 }
 
-/* Management surfaces: "production office" — paper-bright, calm. */
+/* Management surfaces: "production office" — warm paper, calm.
+   Palette derived from kinolab.ai (warm ink #f3efe8 family + accent #ff6b2c). */
 :root {
-    --background: #fafaf7; /* Paper */
-    --foreground: #17181c; /* Ink */
-    --card: #ffffff; /* Panel */
-    --card-foreground: #17181c;
-    --popover: #ffffff;
-    --popover-foreground: #17181c;
-    --primary: #17181c;
-    --primary-foreground: #fafaf7;
-    --secondary: #f1f1ec;
-    --secondary-foreground: #17181c;
-    --muted: #f1f1ec;
-    --muted-foreground: #6e7076;
-    --accent: #f1f1ec;
-    --accent-foreground: #17181c;
+    --background: #f7f5f0; /* warm paper */
+    --foreground: #16181d; /* brand ink-dark */
+    --card: #fffefa; /* Panel */
+    --card-foreground: #16181d;
+    --popover: #fffefa;
+    --popover-foreground: #16181d;
+    --primary: #16181d;
+    --primary-foreground: #f3efe8;
+    --secondary: #efece4;
+    --secondary-foreground: #16181d;
+    --muted: #efece4;
+    --muted-foreground: #6b6e74;
+    --accent: #efece4;
+    --accent-foreground: #16181d;
     --destructive: #b42318;
-    --border: #e4e4de; /* Line */
-    --input: #e4e4de;
-    --ring: #ff4d00;
+    --border: #e5e1d8; /* warm line */
+    --input: #e5e1d8;
+    --ring: #ff6b2c;
     --chart-1: #2e7de1;
     --chart-2: #7048e8;
     --chart-3: #1f9d55;
     --chart-4: #d97706;
     --chart-5: #8a8f98;
     --radius: 0.625rem; /* 10px cards; radius-sm = 6px controls */
-    --sidebar: #f5f5f1;
-    --sidebar-foreground: #17181c;
-    --sidebar-primary: #17181c;
-    --sidebar-primary-foreground: #fafaf7;
-    --sidebar-accent: #eaeae4;
-    --sidebar-accent-foreground: #17181c;
-    --sidebar-border: #e4e4de;
-    --sidebar-ring: #ff4d00;
-    /* Camera-tape orange: primary actions, Pick, unread markers only. */
-    --tape: #ff4d00;
+    --sidebar: #f2efe8;
+    --sidebar-foreground: #16181d;
+    --sidebar-primary: #16181d;
+    --sidebar-primary-foreground: #f3efe8;
+    --sidebar-accent: #e9e5db;
+    --sidebar-accent-foreground: #16181d;
+    --sidebar-border: #e5e1d8;
+    --sidebar-ring: #ff6b2c;
+    /* Brand accent (kinolab.ai): primary actions, Pick, unread markers only. */
+    --tape: #ff6b2c;
 }
 
-/* Review Room: "grading suite" — true dark, chromeless, media first. */
+/* Review Room: "grading suite" — the kinolab.ai dark palette, verbatim. */
 .dark {
-    --background: #0e0f12;
-    --foreground: #e8e8e4;
-    --card: #191b20;
-    --card-foreground: #e8e8e4;
-    --popover: #191b20;
-    --popover-foreground: #e8e8e4;
-    --primary: #e8e8e4;
-    --primary-foreground: #17181c;
-    --secondary: #22242b;
-    --secondary-foreground: #e8e8e4;
-    --muted: #22242b;
-    --muted-foreground: #9a9ca3;
-    --accent: #22242b;
-    --accent-foreground: #e8e8e4;
+    --background: #0b0d11;
+    --foreground: #f3efe8;
+    --card: #12161d;
+    --card-foreground: #f3efe8;
+    --popover: #12161d;
+    --popover-foreground: #f3efe8;
+    --primary: #f3efe8;
+    --primary-foreground: #16181d;
+    --secondary: #1a1f27;
+    --secondary-foreground: #f3efe8;
+    --muted: #1a1f27;
+    --muted-foreground: #a4a8af;
+    --accent: #1a1f27;
+    --accent-foreground: #f3efe8;
     --destructive: #ef6351;
-    --border: #26282f;
-    --input: #26282f;
-    --ring: #ff4d00;
+    --border: rgba(243, 239, 232, 0.12);
+    --input: rgba(243, 239, 232, 0.12);
+    --ring: #ff6b2c;
     --chart-1: #2e7de1;
     --chart-2: #7048e8;
-    --chart-3: #1f9d55;
+    --chart-3: #67c98a;
     --chart-4: #d97706;
     --chart-5: #8a8f98;
-    --sidebar: #14161a;
-    --sidebar-foreground: #e8e8e4;
-    --sidebar-primary: #e8e8e4;
-    --sidebar-primary-foreground: #17181c;
-    --sidebar-accent: #22242b;
-    --sidebar-accent-foreground: #e8e8e4;
-    --sidebar-border: #26282f;
-    --sidebar-ring: #ff4d00;
-    --tape: #ff4d00;
+    --sidebar: #101319;
+    --sidebar-foreground: #f3efe8;
+    --sidebar-primary: #f3efe8;
+    --sidebar-primary-foreground: #16181d;
+    --sidebar-accent: #1a1f27;
+    --sidebar-accent-foreground: #f3efe8;
+    --sidebar-border: rgba(243, 239, 232, 0.12);
+    --sidebar-ring: #ff6b2c;
+    --tape: #ff6b2c;
 }
 
 @layer base {

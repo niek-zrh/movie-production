@@ -316,7 +316,7 @@ export function ReviewRoom({
 
         {/* Center: compare canvas + right rail */}
         <div className="flex min-h-0 flex-1">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#0E0F12]">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
             {loading ? (
               <div className="flex flex-1 items-center justify-center">
                 <Skeleton className="h-64 w-96 max-w-[80%]" />

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { copy } from "@/lib/copy";
-import { Clapperboard } from "lucide-react";
+import { KinolabMark } from "./kinolab-mark";
 
 /** First user creates the studio; everyone else arrives via invite (F1). */
 export function CreateStudio() {
@@ -20,9 +20,7 @@ export function CreateStudio() {
     <main className="flex min-h-screen items-center justify-center p-6">
       <div className="w-full max-w-sm space-y-6">
         <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Clapperboard className="size-5" />
-          </div>
+          <KinolabMark className="size-10 shrink-0" />
           <div>
             <h1 className="font-display text-xl font-semibold tracking-tight">
               Welcome to {copy.appName}

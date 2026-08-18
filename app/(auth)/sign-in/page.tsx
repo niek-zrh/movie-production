@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { copy } from "@/lib/copy";
-import { Clapperboard } from "lucide-react";
+import { KinolabMark, KinolabWordmark } from "@/components/app/kinolab-mark";
 
 export default function SignInPage() {
   const { signIn } = useAuthActions();
@@ -49,12 +49,10 @@ export default function SignInPage() {
     <main className="flex min-h-screen items-center justify-center bg-background p-6">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Clapperboard className="size-5" />
-          </div>
+          <KinolabMark className="size-10 shrink-0" />
           <div>
-            <h1 className="font-display text-xl font-semibold tracking-tight">
-              {copy.appName}
+            <h1 className="text-xl">
+              <KinolabWordmark />
             </h1>
             <p className="text-xs text-muted-foreground">{copy.tagline}</p>
           </div>

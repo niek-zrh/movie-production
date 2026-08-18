@@ -50,7 +50,7 @@ export function Filmstrip({
               onClick={() => onFocus(i)}
               title={`v${version.index} — ${VERSION_STATUS_LABEL[version.status]}`}
               className={cn(
-                "relative aspect-video h-full shrink-0 overflow-hidden rounded-md border bg-[#0E0F12] outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                "relative aspect-video h-full shrink-0 overflow-hidden rounded-md border bg-background outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
                 focused ? "border-tape" : "border-border",
                 version.status === "shortlisted" &&
                   "ring-1 ring-foreground/60",

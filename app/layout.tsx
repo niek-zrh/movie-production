@@ -1,25 +1,26 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Inter, Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Archivo, Martian_Mono } from "next/font/google";
 import { ConvexAuthNextjsServerProvider } from "@convex-dev/auth/nextjs/server";
 import { ConvexClientProvider } from "@/components/providers/convex-client-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
-const spaceGrotesk = Space_Grotesk({
+// Brand faces per kinolab.ai: Archivo (display + UI, variable width) and
+// Martian Mono (codes, labels, filenames).
+const archivo = Archivo({
   subsets: ["latin"],
-  variable: "--font-space-grotesk",
-  weight: ["500", "600", "700"],
+  variable: "--font-archivo",
+  axes: ["wdth"],
 });
-const jetbrainsMono = JetBrains_Mono({
+const martianMono = Martian_Mono({
   subsets: ["latin"],
-  variable: "--font-jetbrains-mono",
+  variable: "--font-martian-mono",
 });
 
 export const metadata: Metadata = {
   title: "Kinolab",
-  description: "Production orchestration for AI-native film studios",
+  description: "Film production, built for the age of AI",
 };
 
 export default function RootLayout({
@@ -29,12 +30,7 @@ export default function RootLayout({
     <ConvexAuthNextjsServerProvider>
       <html
         lang="en"
-        className={cn(
-          "font-sans",
-          inter.variable,
-          spaceGrotesk.variable,
-          jetbrainsMono.variable,
-        )}
+        className={cn("font-sans", archivo.variable, martianMono.variable)}
       >
         <body>
           <ConvexClientProvider>{children}</ConvexClientProvider>

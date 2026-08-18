@@ -76,6 +76,17 @@ Format: date — decision — why. Spec references are to the mega prompt
   and the QC parameter "Slate info correct" keep their names — they refer to
   the physical clapperboard slate (the design motif), not the old brand.
 
+- 2026-08-17 — **Brand embedded from kinolab.ai**: fonts Archivo (display +
+  UI, variable width) and Martian Mono (codes/labels) via next/font; accent
+  #FF6B2C with dark glyphs (replaces #FF4D00; status "picked" follows); dark
+  mood now uses the site palette verbatim (#0b0d11 / #12161d / warm ink
+  #f3efe8); light "office" mood retuned to the warm-paper family. Logo mark
+  recreated as SVG (`components/app/kinolab-mark.tsx`) + KINOLAB.AI wordmark;
+  tagline now the site hero: "From forty generations to one approved shot."
+  The two-mood architecture (paper office / dark review room) is kept — the
+  site is dark-only, but the product's light management surfaces are a spec
+  §9 design decision; both moods now derive from the brand palette.
+
 ## Post-pilot parking lot
 1. Resource planning / workload view (raised in discovery, spec §14).
 2. Telegram notification delivery via `lib/notify.ts` fan-out.

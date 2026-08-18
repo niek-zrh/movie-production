@@ -89,7 +89,7 @@ export function PickDialog({
         </DialogHeader>
 
         {isImageVersion(version) && version.asset?.thumbUrl && (
-          <div className="overflow-hidden rounded-lg bg-[#0E0F12]">
+          <div className="overflow-hidden rounded-lg bg-background">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={version.asset.thumbUrl}
