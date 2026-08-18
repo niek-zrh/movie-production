@@ -23,6 +23,12 @@ export default function SignInPage() {
     setBusy(true);
     const formData = new FormData(e.currentTarget);
     formData.set("flow", flow);
+    // The credentials account is keyed by the email exactly as submitted —
+    // normalize so "Niek@…" at sign-up and "niek@…" at sign-in can't diverge.
+    const email = formData.get("email");
+    if (typeof email === "string") {
+      formData.set("email", email.trim().toLowerCase());
+    }
     try {
       // The auth action can hang instead of rejecting (e.g. signing up with
       // an email that already has an account) — don't leave the form stuck.
