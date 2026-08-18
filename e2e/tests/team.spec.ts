@@ -305,6 +305,10 @@ test.describe.serial("team", () => {
     await expect(
       ownerPage.getByText(/can't remove yourself/).first(),
     ).toBeVisible();
+    // The dialog deliberately stays open on failure so the toast reads next to
+    // it; close it first, or the open modal hides the table from the a11y tree
+    // and the row lookup below finds nothing.
+    await ownerPage.getByRole("button", { name: "Cancel" }).click();
     // Row is still there.
     await expect(ownRow).toHaveCount(1);
     expect(ownerErrors.filter(
