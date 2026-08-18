@@ -56,8 +56,15 @@ async function signupAllowed(
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
   providers: process.env.AUTH_GOOGLE_ID ? [password, Google] : [password],
   callbacks: {
+    // NOTE: overriding createOrUpdateUser replaces the library default, and
+    // with it the call to afterUserCreatedOrUpdated — so invite claiming
+    // (spec F1: membership rows carrying invitedEmail attach on sign-in)
+    // happens directly here, on BOTH the sign-in and sign-up paths.
     async createOrUpdateUser(ctx, args) {
-      if (args.existingUserId !== null) return args.existingUserId;
+      if (args.existingUserId !== null) {
+        await claimInvitesForUser(ctx, args.existingUserId);
+        return args.existingUserId;
+      }
       const profile = args.profile as {
         email?: string;
         name?: string;
@@ -69,16 +76,13 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
           "Sign-ups are invite-only — ask your producer to invite this email.",
         );
       }
-      return await ctx.db.insert("users", {
+      const userId = await ctx.db.insert("users", {
         ...(email !== undefined ? { email } : {}),
         ...(profile.name !== undefined ? { name: profile.name } : {}),
         ...(profile.image !== undefined ? { image: profile.image } : {}),
       });
-    },
-    async afterUserCreatedOrUpdated(ctx, { userId }) {
-      // Invites are membership rows carrying invitedEmail; claim them on
-      // every sign-in so joining a studio is automatic (spec F1).
       await claimInvitesForUser(ctx, userId);
+      return userId;
     },
   },
 });
