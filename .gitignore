@@ -7,7 +7,6 @@ out/
 next-env.d.ts
 
 # convex
-convex/_generated/
 .convex/
 
 # env

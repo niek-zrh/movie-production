@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.convex
+.env
+.env.*
+e2e
+test-results
+playwright-report
+docs
+*.md
+!README.md

@@ -20,7 +20,12 @@ const pkcs8 = privateKey
 const jwk = publicKey.export({ format: "jwk" });
 const jwks = JSON.stringify({ keys: [{ use: "sig", alg: "RS256", ...jwk }] });
 
-const env = { ...process.env, CONVEX_AGENT_MODE: process.env.CONVEX_AGENT_MODE ?? "anonymous" };
+// Default to the anonymous local deployment ONLY when not targeting a
+// self-hosted backend (CONVEX_SELF_HOSTED_URL + _ADMIN_KEY route the CLI).
+const env = { ...process.env };
+if (!env.CONVEX_SELF_HOSTED_URL && !env.CONVEX_AGENT_MODE) {
+  env.CONVEX_AGENT_MODE = "anonymous";
+}
 const run = (args) =>
   execFileSync("npx", ["convex", "env", "set", "--", ...args], {
     stdio: "inherit",

@@ -87,6 +87,20 @@ Format: date — decision — why. Spec references are to the mega prompt
   site is dark-only, but the product's light management surfaces are a spec
   §9 design decision; both moods now derive from the brand palette.
 
+- 2026-08-18 — **Docker deployment baked in** (mirrors the user's Corticum
+  Sense pattern): multi-stage `Dockerfile` (one-shot `convex-deploy` target +
+  standalone Next runner on 8090 with `/api/health`), `docker-compose.yml`
+  with `depends_on: service_completed_successfully` so the frontend only
+  recreates after a successful function push; key-less runs skip the push and
+  exit 0. Consequences: `convex/_generated` is now **committed** (the Convex
+  CLI's own guidance; `codegen` refuses to run without a configured
+  deployment inside the image), `next.config.ts` gained
+  `output: "standalone"`, the middleware matcher excludes `/api/` so the
+  healthcheck never round-trips to Convex, and `scripts/setup-auth.mjs` only
+  defaults to the anonymous local deployment when no
+  `CONVEX_SELF_HOSTED_URL` is set. Both images built and smoke-tested
+  locally (health 200, sign-in renders, skip behavior verified).
+
 ## Post-pilot parking lot
 1. Resource planning / workload view (raised in discovery, spec §14).
 2. Telegram notification delivery via `lib/notify.ts` fan-out.

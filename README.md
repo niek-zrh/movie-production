@@ -132,6 +132,44 @@ npx convex run seed:run                 # optional
 `NEXT_PUBLIC_CONVEX_URL` + `NEXT_PUBLIC_CONVEX_SITE_URL` set, and update
 `SITE_URL` + the Google redirect URIs to the public URLs.
 
+## Deploying with Docker (self-hosted Convex + Dokploy/Traefik)
+
+`docker-compose.yml` follows the Corticum pattern: every
+`docker compose up -d --build` first runs the one-shot **convex-deploy**
+service (pushes `convex/` to the self-hosted backend), and only if that push
+succeeds does the **frontend** container get (re)created — a new frontend
+never serves against stale functions. Without
+`CONVEX_SELF_HOSTED_ADMIN_KEY` set, the push logs a skip notice and the
+frontend deploys as before.
+
+Prerequisites: a self-hosted Convex backend (the official
+`ghcr.io/get-convex/convex-backend` compose) reachable at e.g.
+`https://api.kinolab.ai`, and its admin key (`generate_admin_key.sh` in the
+backend container). Traefik/Dokploy with the external `dokploy-network`.
+
+Environment (in Dokploy's compose Environment tab):
+
+```bash
+CONVEX_SELF_HOSTED_URL=https://api.kinolab.ai
+CONVEX_SELF_HOSTED_ADMIN_KEY=<never commit this>
+NEXT_PUBLIC_CONVEX_URL=https://api.kinolab.ai   # inlined at build → rebuild to change
+```
+
+One-time backend setup (from any machine, same two env vars exported):
+
+```bash
+node scripts/setup-auth.mjs https://app.kinolab.ai   # JWT keys + SITE_URL
+npx convex env set GOOGLE_DRIVE_CLIENT_ID …          # Google vars, see above
+npx convex run seed:run                              # optional demo data
+```
+
+The frontend serves on port 8090 with `GET /api/health` as the container
+healthcheck; Traefik routes `app.kinolab.ai` to it (edit the labels in
+`docker-compose.yml` for other domains). The Google OAuth redirect URIs must
+point at the backend's **site origin** (HTTP-actions URL) —
+`<site-origin>/google/drive/callback` — see the backend's
+`CONVEX_SITE_ORIGIN` setting.
+
 ## E2E smoke tests
 
 With `pnpm dev` running (and the seed applied):
