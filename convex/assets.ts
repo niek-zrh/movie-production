@@ -1,12 +1,13 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import type { QueryCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   assertCanForProduction,
   assertMemberForProduction,
 } from "./lib/permissions";
 import { actorName, logActivity } from "./lib/activity";
-import { createVersionWithAssetHelper, enrichAsset } from "./versions";
+import { createVersionWithAssetHelper } from "./versions";
 import type { EnrichedAsset } from "./versions";
 
 /**
@@ -16,6 +17,82 @@ import type { EnrichedAsset } from "./versions";
  * so index logic lives in exactly one place.
  */
 
+/**
+ * Hard bound on the rows one list returns. Convex refuses a function that
+ * reads more than 4,096 documents, and an enriched asset costs the row plus
+ * up to two ctx.storage.getUrl lookups (thumb + file) — the old unbounded
+ * collect() therefore bricked the Files page for good somewhere past ~1,400
+ * assets, well inside this pilot's projected ~6,000 versions.
+ *
+ * At the cap the newest MAX_LIST_ASSETS rows come back and the array is
+ * exactly that long. The shape is unchanged (CONTRACTS §assets), so a caller
+ * that wants to say "showing the newest 750" tests `assets.length` against
+ * this ceiling; `q` / `unassignedOnly` narrow the scan server-side, so older
+ * files stay reachable by name instead of only through this newest page.
+ */
+const MAX_LIST_ASSETS = 750;
+
+/**
+ * Hard bound on the rows one list *examines*. A filter that matches almost
+ * nothing (unassignedOnly on a fully assigned production) would otherwise
+ * stream the whole table looking for MAX_LIST_ASSETS hits and hit the read
+ * ceiling anyway. Past this many rows a filtered view shows the newest
+ * matches rather than every match — never a silent partial for the unfiltered
+ * Files page, which stops at MAX_LIST_ASSETS first.
+ *
+ * Worst case for one call: 2,000 rows streamed + 2 × 750 URL lookups = 3,500
+ * reads, ~600 under the ceiling.
+ */
+const MAX_ASSET_SCAN = 2000;
+
+/**
+ * Per-call storage URL memo. Image uploads reuse the file itself as their
+ * thumbnail (versions.addFromUpload: `thumbStorageId ?? storageId`), so naive
+ * enrichment resolves the same id twice on every such row, and each getUrl
+ * counts against the read ceiling. The promise (not the string) is cached so
+ * parallel enrichment can't race two lookups of one id — same trick as the
+ * enrich cache in shots.list.
+ */
+type UrlCache = Map<Id<"_storage">, Promise<string | null>>;
+
+function cachedUrl(
+  ctx: QueryCtx,
+  cache: UrlCache,
+  storageId: Id<"_storage">,
+): Promise<string | null> {
+  const cached = cache.get(storageId);
+  if (cached !== undefined) return cached;
+  const pending = ctx.storage.getUrl(storageId);
+  cache.set(storageId, pending);
+  return pending;
+}
+
+/**
+ * Same enrichment as versions.enrichAsset — thumbUrl from the cached
+ * thumbnail, fileUrl per provider (CONTRACTS §assets) — with the lookups
+ * routed through the per-call memo, which that shared helper has no place to
+ * hold. Keep the provider branches in step with versions.enrichAsset.
+ */
+async function enrichAssetCached(
+  ctx: QueryCtx,
+  asset: Doc<"assets">,
+  cache: UrlCache,
+): Promise<EnrichedAsset> {
+  const thumbUrl =
+    asset.thumbStorageId !== undefined
+      ? await cachedUrl(ctx, cache, asset.thumbStorageId)
+      : null;
+  let fileUrl: string | null = null;
+  if (asset.provider === "storage" && asset.storageId !== undefined) {
+    fileUrl = await cachedUrl(ctx, cache, asset.storageId);
+  } else if (asset.provider === "gdrive") {
+    fileUrl = asset.webViewLink ?? null;
+  } else if (asset.provider === "url") {
+    fileUrl = asset.url ?? null;
+  }
+  return { ...asset, thumbUrl, fileUrl };
+}
+
 export const listForProduction = query({
   args: {
     productionId: v.id("productions"),
@@ -24,28 +101,37 @@ export const listForProduction = query({
   },
   handler: async (ctx, args): Promise<EnrichedAsset[]> => {
     await assertMemberForProduction(ctx, args.productionId);
-    let assets = await ctx.db
+    const unassignedOnly = args.unassignedOnly === true;
+    const needle = args.q?.trim().toLowerCase();
+    const stream = ctx.db
       .query("assets")
       .withIndex("by_production", (q) =>
         q.eq("productionId", args.productionId),
       )
-      .order("desc") // newest first
-      .collect();
-    if (args.unassignedOnly === true) {
-      assets = assets.filter(
-        (asset) =>
-          asset.shotId === undefined &&
-          asset.versionId === undefined &&
-          asset.kind === "file",
-      );
+      .order("desc"); // newest first
+
+    // Both filters run while the index streams, so a discarded row never
+    // costs a storage lookup and the scan stops at the caps above.
+    const assets: Doc<"assets">[] = [];
+    let scanned = 0;
+    for await (const asset of stream) {
+      scanned += 1;
+      const unassigned =
+        asset.shotId === undefined &&
+        asset.versionId === undefined &&
+        asset.kind === "file";
+      const matchesNeedle =
+        needle === undefined ||
+        needle.length === 0 ||
+        asset.name.toLowerCase().includes(needle);
+      if ((!unassignedOnly || unassigned) && matchesNeedle) assets.push(asset);
+      if (assets.length >= MAX_LIST_ASSETS || scanned >= MAX_ASSET_SCAN) break;
     }
-    const needle = args.q?.trim().toLowerCase();
-    if (needle !== undefined && needle.length > 0) {
-      assets = assets.filter((asset) =>
-        asset.name.toLowerCase().includes(needle),
-      );
-    }
-    return await Promise.all(assets.map((asset) => enrichAsset(ctx, asset)));
+
+    const urls: UrlCache = new Map();
+    return await Promise.all(
+      assets.map((asset) => enrichAssetCached(ctx, asset, urls)),
+    );
   },
 });
 
@@ -55,12 +141,24 @@ export const listForShot = query({
     const shot = await ctx.db.get(args.shotId);
     if (!shot) throw new ConvexError("Shot not found");
     await assertMemberForProduction(ctx, shot.productionId);
-    const assets = await ctx.db
+    const stream = ctx.db
       .query("assets")
       .withIndex("by_shot", (q) => q.eq("shotId", args.shotId))
-      .order("desc") // newest first
-      .collect();
-    return await Promise.all(assets.map((asset) => enrichAsset(ctx, asset)));
+      .order("desc"); // newest first
+
+    // One shot holds a handful of files, so the cap is unreachable here in
+    // normal use; it exists so a runaway sync can't take the shot's Files tab
+    // down the way it took the Files page down (see MAX_LIST_ASSETS).
+    const assets: Doc<"assets">[] = [];
+    for await (const asset of stream) {
+      assets.push(asset);
+      if (assets.length >= MAX_LIST_ASSETS) break;
+    }
+
+    const urls: UrlCache = new Map();
+    return await Promise.all(
+      assets.map((asset) => enrichAssetCached(ctx, asset, urls)),
+    );
   },
 });
 

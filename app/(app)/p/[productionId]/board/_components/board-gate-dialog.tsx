@@ -19,8 +19,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { showMutationError, type StageRow } from "./board-helpers";
 
 /**
- * Approve/Reject a stage gate. Rendered only while a decision is pending, so
- * the note resets naturally between openings. Note is REQUIRED for a reject.
+ * Approve/Reject a stage gate. Note is REQUIRED for a reject.
+ *
+ * The form lives in a keyed child so its note is mounted fresh for every
+ * opening: the ledger is immutable, and a note typed for an approval must
+ * never be submitted as the rejection reason (or the other way round).
  */
 export function BoardGateDialog({
   stage,
@@ -31,11 +34,30 @@ export function BoardGateDialog({
   decision: "approved" | "rejected" | null;
   onClose: () => void;
 }) {
+  if (decision === null) return null;
+  return (
+    <GateDecisionDialog
+      key={`${stage._id}:${decision}`}
+      stage={stage}
+      decision={decision}
+      onClose={onClose}
+    />
+  );
+}
+
+function GateDecisionDialog({
+  stage,
+  decision,
+  onClose,
+}: {
+  stage: StageRow;
+  decision: "approved" | "rejected";
+  onClose: () => void;
+}) {
   const decideGate = useMutation(api.approvals.decideGate);
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  if (decision === null) return null;
   const rejecting = decision === "rejected";
 
   return (

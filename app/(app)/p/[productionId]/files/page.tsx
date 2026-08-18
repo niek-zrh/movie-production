@@ -282,6 +282,15 @@ export default function FilesPage() {
                   onAttach={setAttachAsset}
                 />
               ))}
+              {/* assets.listForProduction returns the newest 750 rows so this
+                  page can never hit Convex's read limit — say so rather than
+                  letting older files vanish without explanation. */}
+              {assets !== undefined && assets.length >= 750 && (
+                <p className="text-xs text-muted-foreground">
+                  Showing the 750 most recent files. Older files are still in
+                  the production — open the shot to reach them.
+                </p>
+              )}
             </div>
           )}
         </>

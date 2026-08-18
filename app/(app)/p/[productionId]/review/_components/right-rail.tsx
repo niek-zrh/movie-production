@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { UserAvatar } from "@/components/app/user-avatar";
 import { formatAgo, formatWhen } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { DecisionActions } from "./decision-dialogs";
 import {
   firstErrorLine,
   VERSION_DOT,
@@ -20,17 +21,26 @@ import {
 } from "./review-utils";
 
 /**
- * Right rail: the focused version's prompt metadata, its decision when
- * decided, and the comment thread on that version.
+ * Right rail: the focused version's decision buttons, its prompt metadata,
+ * its decision when decided, and the comment thread on that version.
  */
 export function RightRail({
   productionId,
   shotId,
   version,
+  canDecide,
+  onShortlist,
+  onReject,
+  onPick,
 }: {
   productionId: Id<"productions">;
   shotId: Id<"shots">;
   version: VersionCard;
+  /** Roles that can't decide never see the controls (spec §6 permissions). */
+  canDecide: boolean;
+  onShortlist: () => void;
+  onReject: () => void;
+  onPick: () => void;
 }) {
   const meta = version.promptMeta;
   const decided = version.decidedBy !== undefined;
@@ -70,6 +80,15 @@ export function RightRail({
             <p className="mt-2 truncate font-mono text-[11px] text-muted-foreground">
               {version.asset.name}
             </p>
+          )}
+          {canDecide && (
+            <DecisionActions
+              version={version}
+              onShortlist={onShortlist}
+              onReject={onReject}
+              onPick={onPick}
+              className="mt-3"
+            />
           )}
         </div>
 

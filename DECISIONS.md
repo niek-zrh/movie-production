@@ -101,6 +101,25 @@ Format: date — decision — why. Spec references are to the mega prompt
   `CONVEX_SELF_HOSTED_URL` is set. Both images built and smoke-tested
   locally (health 200, sign-in renders, skip behavior verified).
 
+- **Go-live hardening (2026-08-19).** Deviations introduced deliberately:
+  (a) the sign-up gate now fails CLOSED — invite-only unless
+  `ALLOW_OPEN_SIGNUPS=1`, except on a local dev backend detected from
+  `CONVEX_SITE_URL`, so `pnpm dev` and both suites need no configuration;
+  (b) `seed:run` is an `internalAction`, not public (`npx convex run` still
+  reaches it); (c) list queries are **bounded**, not exhaustive — Convex
+  hard-fails past 4,096 document reads, so `shots.list` (1000),
+  `assets.listForProduction` (750), `approvals.ledger` (500),
+  `search.global` (8/group) and `productions.listForStudio` (per-production
+  ceiling) cap and the UI states the cap rather than truncating silently;
+  (d) `shots.versionsCount` is denormalised, with
+  `migrations.backfillVersionsCount` for existing rows; (e) superseding a
+  version on pick now writes a `version.rejected` activity row — the daily
+  report's Rejections tile read 0 on days full of them, and an e2e assertion
+  encoded that bug; (f) a stage is "done" only while its gate is approved, and
+  a decided gate must be re-requested before it can be decided again.
+  Known gap shipped knowingly: **no password reset** (no email provider
+  wired); mitigations in README §Go-live checklist.
+
 ## Post-pilot parking lot
 1. Resource planning / workload view (raised in discovery, spec §14).
 2. Telegram notification delivery via `lib/notify.ts` fan-out.

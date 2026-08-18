@@ -1,6 +1,6 @@
 {
   "name": "kinolab",
-  "version": "0.1.0",
+  "version": "1.0.0-pilot.1",
   "private": true,
   "scripts": {
     "dev": "concurrently -k -n convex,next -c blue,green \"convex dev\" \"next dev\"",
@@ -8,7 +8,9 @@
     "dev:backend": "convex dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:api": "node e2e/api/run.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@auth/core": "^0.41.3",

@@ -17,3 +17,7 @@ next-env.d.ts
 # misc
 .DS_Store
 *.tsbuildinfo
+
+# test artifacts
+test-results/
+playwright-report/

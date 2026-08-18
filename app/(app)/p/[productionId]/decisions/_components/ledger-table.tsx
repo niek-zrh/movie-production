@@ -65,7 +65,10 @@ export function LedgerSection({
 
   const exportCsv = () => {
     if (!ledger || ledger.length === 0 || !productionCode) return;
-    const blob = new Blob([toCsv(ledger)], {
+    // Excel on Windows assumes the system codepage without a BOM, which turns
+    // Cyrillic titles, names and notes into mojibake — the studio is
+    // Russian-speaking, so the BOM is what makes this export readable.
+    const blob = new Blob(["\uFEFF", toCsv(ledger)], {
       type: "text/csv;charset=utf-8",
     });
     const url = URL.createObjectURL(blob);
@@ -128,6 +131,16 @@ export function LedgerSection({
               ))}
             </TableBody>
           </Table>
+          {/* approvals.ledger returns the newest MAX_LEDGER_ROWS decisions so
+              the page can never hit Convex's read limit — say so rather than
+              letting older history disappear silently. */}
+          {ledger.length >= 500 && (
+            <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+              Showing the 500 most recent decisions — the CSV exports the same
+              500. Older decisions are still recorded; narrow the scope to see
+              further back.
+            </p>
+          )}
         </div>
       )}
     </section>
@@ -187,8 +200,17 @@ function LedgerTableRow({ row }: { row: LedgerRow }) {
 
 /* ------------------------------- CSV export ------------------------------- */
 
+/**
+ * Excel and Sheets evaluate any cell that starts with = + - @ (or a leading
+ * tab/CR), so an exported decision note, shot code or member name can run as
+ * a formula when the producer opens the file. Prefixing with a single quote
+ * marks the cell as text — the value still reads the same in the sheet.
+ */
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
 function csvEscape(value: string): string {
-  return /[",\n\r]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+  const cell = FORMULA_LEAD.test(value) ? `'${value}` : value;
+  return /[",\n\r]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
 }
 
 function toCsv(rows: LedgerRow[]): string {

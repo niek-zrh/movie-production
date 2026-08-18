@@ -30,7 +30,7 @@ import {
   IDENTITY_TRANSFORM,
   type CanvasTransform,
 } from "./compare-canvas";
-import { PickDialog, RejectDialog } from "./decision-dialogs";
+import { DecisionActions, PickDialog, RejectDialog } from "./decision-dialogs";
 import { Filmstrip } from "./filmstrip";
 import { RightRail } from "./right-rail";
 import {
@@ -222,6 +222,9 @@ export function ReviewRoom({
       },
     },
     !leaving,
+    // The room owns "?" while it is mounted, so the app shell's light-themed
+    // overlay doesn't open stacked underneath the room's own hints.
+    { exclusive: true },
   );
 
   const loading = shot === undefined || versions === undefined;
@@ -257,6 +260,18 @@ export function ReviewRoom({
           )}
 
           <div className="flex-1" />
+
+          {/* Decisions live in the rail; mirror them here when it's hidden so
+              Pick is never more than one click away. */}
+          {!railOpen && focused !== undefined && canDecide && (
+            <DecisionActions
+              version={focused}
+              onShortlist={onShortlist}
+              onReject={onReject}
+              onPick={onPick}
+              className="hidden md:flex"
+            />
+          )}
 
           {/* Compare-count indicator */}
           <div className="flex items-center gap-1.5">
@@ -348,6 +363,10 @@ export function ReviewRoom({
               productionId={productionId}
               shotId={shotId}
               version={focused}
+              canDecide={canDecide}
+              onShortlist={onShortlist}
+              onReject={onReject}
+              onPick={onPick}
             />
           )}
         </div>
@@ -430,6 +449,10 @@ function RoomHints({
         <p className="text-xs text-muted-foreground">
           Scroll zooms toward the cursor · drag pans · double-click resets —
           synced across every pane.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Letter keys follow the physical key, so they work on a Russian
+          layout too. Every decision is also a button in the right rail.
         </p>
       </DialogContent>
     </Dialog>

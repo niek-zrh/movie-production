@@ -44,3 +44,18 @@ export function initials(name: string): string {
     .join("")
     .toUpperCase();
 }
+
+/**
+ * Is this `<input type="date">` value worth sending to the server yet?
+ *
+ * The native date input fires `change` on every keystroke, so typing the year
+ * of "2026-09-01" walks through 0002-09-01, 0020-09-01 and 0202-09-01 — each
+ * one a well-formed "YYYY-MM-DD" that used to be saved AND logged to the
+ * activity ledger before the real date arrived. Anything outside a sane
+ * production window is a half-typed year, not a due date.
+ */
+export function isCommittableDueDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  return year >= 2000 && year <= 2999;
+}

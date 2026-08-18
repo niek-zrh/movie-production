@@ -184,6 +184,12 @@ export async function createVersionWithAssetHelper(
   // Back-patch the asset with its version (and shot, for library assets).
   await ctx.db.patch(assetId, { shotId: shot._id, versionId });
 
+  // Denormalised option count (schema.shots.versionsCount): shots.list must
+  // never read a shot's versions to count them. `siblings` is the
+  // authoritative count at this point, so writing siblings.length + 1 rather
+  // than incrementing also backfills shots created before the field existed.
+  await ctx.db.patch(shot._id, { versionsCount: siblings.length + 1 });
+
   if (shot.coverAssetId === undefined) {
     await ctx.db.patch(shot._id, { coverAssetId: assetId });
   }
@@ -284,6 +290,9 @@ export const addFromUpload = mutation({
     name: v.string(),
     mimeType: v.optional(v.string()),
     sizeBytes: v.optional(v.number()),
+    // A separately uploaded, downscaled thumbnail. When absent an image is
+    // still its own thumbnail, so old clients keep working unchanged.
+    thumbStorageId: v.optional(v.id("_storage")),
     promptMeta: v.optional(promptMetaValidator),
     note: v.optional(v.string()),
   },
@@ -305,8 +314,10 @@ export const addFromUpload = mutation({
         name: args.name,
         mimeType: args.mimeType,
         sizeBytes: args.sizeBytes,
-        // Images are their own thumbnail until Drive supplies a better one.
-        thumbStorageId: isImage ? args.storageId : undefined,
+        // A client-side downscale wins; otherwise images are their own
+        // thumbnail until Drive supplies a better one.
+        thumbStorageId:
+          args.thumbStorageId ?? (isImage ? args.storageId : undefined),
       },
       promptMeta: args.promptMeta,
       note: args.note,
@@ -491,6 +502,7 @@ export const pick = mutation({
       .query("versions")
       .withIndex("by_shot", (q) => q.eq("shotId", shot._id))
       .collect();
+    const superseded: Doc<"versions">[] = [];
     for (const sibling of siblings) {
       if (sibling._id === version._id) continue;
       if (sibling.status === "rejected") continue;
@@ -500,6 +512,7 @@ export const pick = mutation({
         decidedAt: now,
         decisionNote: `superseded by v${version.index}`,
       });
+      superseded.push(sibling);
     }
 
     await ctx.db.patch(version._id, {
@@ -526,6 +539,26 @@ export const pick = mutation({
     });
 
     const name = await actorName(ctx, userId);
+
+    // Superseding used to be silent, so the daily report's "Rejections" read 0
+    // on days when dozens of options were superseded — reports.ts counts
+    // activity rows of type "version.rejected", so one row per superseded
+    // sibling is the only shape that keeps that number honest; an aggregate
+    // row would count as a single rejection. It is bounded by the shot's
+    // option count, matches what a manual reject() writes, and carries
+    // data.supersededBy so a feed can collapse the burst if it ever needs to.
+    for (const sibling of superseded) {
+      await logActivity(ctx, {
+        productionId: version.productionId,
+        actorId: userId,
+        type: "version.rejected",
+        targetType: "version",
+        targetId: sibling._id,
+        summary: `${name} rejected v${sibling.index} for ${shot.code} — superseded by v${version.index}`,
+        data: { supersededBy: version.index },
+      });
+    }
+
     await logActivity(ctx, {
       productionId: version.productionId,
       actorId: userId,

@@ -10,16 +10,31 @@
 #   CONVEX_CLOUD_ORIGIN=https://api.kinolab.ai
 #   CONVEX_SITE_ORIGIN=https://actions.kinolab.ai
 #   NEXT_PUBLIC_DEPLOYMENT_URL=https://api.kinolab.ai   # dashboard → backend
+#   CONVEX_SELF_HOSTED_ADMIN_KEY=<admin key>            # nightly backup only
 #
-# Admin key (for the app compose's CONVEX_SELF_HOSTED_ADMIN_KEY):
+# Admin key (for the app compose's CONVEX_SELF_HOSTED_ADMIN_KEY and for the
+# backup service below):
 #   docker compose exec kinolab-convex-backend ./generate_admin_key.sh
 #
 # Dashboard: bound to localhost only — reach it via SSH tunnel:
 #   ssh -L 6792:127.0.0.1:6792 <rock>   →   http://localhost:6792
+#
+# IMAGE PINNING: both images are pinned to an explicit build tag, never
+# `:latest`. `:latest` means any `docker compose up`/container recreate can
+# swap the database engine under a live pilot — an upgrade is a decision, not
+# a side effect. Upgrading deliberately: export first (see README §Backups),
+# then bump CONVEX_IMAGE_TAG in .env and `docker compose up -d`.
+#
+# TLS: every router below uses ${TRAEFIK_ENTRYPOINT:-web}, i.e. plain HTTP
+# between the proxy and these containers. See README §"The Cloudflare → origin
+# hop" for what that means and how to move to a websecure entrypoint.
 
 services:
   kinolab-convex-backend:
-    image: ghcr.io/get-convex/convex-backend:latest
+    # Tag c0cb7ae… is what ghcr's `latest` resolved to on 2026-08-18
+    # (digest sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98);
+    # get-convex publishes one commit-sha tag per build and never moves them.
+    image: ghcr.io/get-convex/convex-backend:${CONVEX_IMAGE_TAG:-c0cb7ae17f54e14846c243c5332a8a5e6d0e19d4}
     restart: unless-stopped
     stop_grace_period: 10s
     stop_signal: SIGINT
@@ -38,16 +53,25 @@ services:
       - traefik.enable=true
       - traefik.docker.network=dokploy-network
       - traefik.http.routers.kinolab-convex-cloud.rule=Host(`api.kinolab.ai`)
-      - traefik.http.routers.kinolab-convex-cloud.entrypoints=web
+      - traefik.http.routers.kinolab-convex-cloud.entrypoints=${TRAEFIK_ENTRYPOINT:-web}
+      - traefik.http.routers.kinolab-convex-cloud.tls=${TRAEFIK_TLS:-false}
       - traefik.http.routers.kinolab-convex-cloud.service=kinolab-convex-cloud-svc
       - traefik.http.services.kinolab-convex-cloud-svc.loadbalancer.server.port=3210
       - traefik.http.routers.kinolab-convex-site.rule=Host(`actions.kinolab.ai`)
-      - traefik.http.routers.kinolab-convex-site.entrypoints=web
+      - traefik.http.routers.kinolab-convex-site.entrypoints=${TRAEFIK_ENTRYPOINT:-web}
+      - traefik.http.routers.kinolab-convex-site.tls=${TRAEFIK_TLS:-false}
       - traefik.http.routers.kinolab-convex-site.service=kinolab-convex-site-svc
       - traefik.http.services.kinolab-convex-site-svc.loadbalancer.server.port=3211
+      # With a websecure entrypoint that uses Let's Encrypt, ALSO add (a
+      # certresolver label with an empty value makes Traefik drop the router,
+      # so this cannot be an env var with a blank default):
+      # - traefik.http.routers.kinolab-convex-cloud.tls.certresolver=letsencrypt
+      # - traefik.http.routers.kinolab-convex-site.tls.certresolver=letsencrypt
 
   kinolab-convex-dashboard:
-    image: ghcr.io/get-convex/convex-dashboard:latest
+    # Same build as the backend above — keep the two tags in step.
+    # digest sha256:284a2638e0c1a4ec0c2327d8219776f3a426ca5824b81686ae4d9454dc0ce8ed
+    image: ghcr.io/get-convex/convex-dashboard:${CONVEX_IMAGE_TAG:-c0cb7ae17f54e14846c243c5332a8a5e6d0e19d4}
     restart: unless-stopped
     stop_grace_period: 10s
     stop_signal: SIGINT
@@ -60,6 +84,58 @@ services:
         condition: service_healthy
     networks:
       - dokploy-network
+
+  # The studio's entire production record — every decision, pick, gate, report
+  # and QC run, plus the uploaded images — lives in the convex-data volume, so
+  # it needs a copy that is not that volume. This takes a full snapshot
+  # (documents + file storage) with `npx convex export` on a fixed interval and
+  # keeps the last BACKUP_KEEP_DAYS days. Restore procedure: README §Backups —
+  # a backup nobody has restored is not a backup.
+  # Talks to the backend over the compose network, so backups do not depend on
+  # Traefik, DNS or the public hostname being up.
+  kinolab-convex-backup:
+    image: node:22-alpine
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      CONVEX_SELF_HOSTED_URL: http://kinolab-convex-backend:3210
+      CONVEX_SELF_HOSTED_ADMIN_KEY: ${CONVEX_SELF_HOSTED_ADMIN_KEY:-}
+      # Default: nightly, 14 days of history.
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      # Bind mount, not a named volume: the operator must be able to `scp` the
+      # zips OFF this host. A backup on the machine it backs up is half a backup.
+      - ${BACKUP_DIR:-./backups}:/backups
+    depends_on:
+      kinolab-convex-backend:
+        condition: service_healthy
+    networks:
+      - dokploy-network
+    # convex@1.44.0 = the version this repo builds against (package.json).
+    entrypoint:
+      - sh
+      - -c
+      - |
+        # A throwaway project dir: the CLI is happier run from one, and it
+        # keeps npx's scratch files out of the backup directory.
+        mkdir -p /app && printf '{"name":"kinolab-backup","private":true}' > /app/package.json
+        while true; do
+          if [ -z "$$CONVEX_SELF_HOSTED_ADMIN_KEY" ]; then
+            echo "[backup] CONVEX_SELF_HOSTED_ADMIN_KEY is not set — NO BACKUP IS BEING TAKEN."
+          else
+            out="/backups/kinolab-$$(date -u +%Y%m%dT%H%M%SZ).zip"
+            echo "[backup] exporting $$CONVEX_SELF_HOSTED_URL -> $$out"
+            if npx --yes convex@1.44.0 export --include-file-storage --path "$$out"; then
+              echo "[backup] ok: $$out"
+              find /backups -name 'kinolab-*.zip' -mtime "+$$BACKUP_KEEP_DAYS" -delete
+            else
+              echo "[backup] FAILED — check the admin key and the backend health"
+              rm -f "$$out"
+            fi
+          fi
+          sleep "$$BACKUP_INTERVAL_SECONDS"
+        done
 
 networks:
   dokploy-network:

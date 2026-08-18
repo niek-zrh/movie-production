@@ -24,9 +24,43 @@ const password = Password({
 });
 
 /**
- * Invite-only sign-up (enforced when INVITE_ONLY_SIGNUPS=1 on the
- * deployment — set on the pilot, unset for local dev/tests). New accounts
- * are allowed only when:
+ * A deployment counts as local dev only when Convex's own CONVEX_SITE_URL
+ * points at a loopback host (`http://127.0.0.1:3211` on the anonymous dev
+ * backend; the pilot is `https://actions.kinolab.ai`). A missing or
+ * unparseable value is treated as remote so a real deployment fails closed.
+ */
+function isLocalDevDeployment(): boolean {
+  const siteUrl: string | undefined = process.env.CONVEX_SITE_URL;
+  if (!siteUrl) return false;
+  let hostname: string;
+  try {
+    hostname = new URL(siteUrl).hostname;
+  } catch {
+    return false;
+  }
+  // URL.hostname keeps the brackets on IPv6 literals, hence "[::1]".
+  return (
+    hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]"
+  );
+}
+
+/**
+ * Whether new accounts need an invite. Fails CLOSED: public registration is
+ * never open on a real deployment by accident. Precedence:
+ *  1. INVITE_ONLY_SIGNUPS=1 — explicit lock, wins over everything.
+ *  2. ALLOW_OPEN_SIGNUPS=1 — deliberate escape hatch for open registration.
+ *  3. otherwise invite-only, except on a local dev backend, which stays open
+ *     so `pnpm dev` and the Playwright suite need zero configuration.
+ */
+function inviteOnlySignups(): boolean {
+  if (process.env.INVITE_ONLY_SIGNUPS === "1") return true;
+  if (process.env.ALLOW_OPEN_SIGNUPS === "1") return false;
+  return !isLocalDevDeployment();
+}
+
+/**
+ * Invite-only sign-up (see inviteOnlySignups above for when it is enforced).
+ * New accounts are allowed only when:
  *  - the email has a pending studio invite (the normal onboarding path), or
  *  - the email is on ADMIN_SIGNUP_ALLOWLIST (comma-separated, for
  *    bootstrapping owners), or
@@ -37,7 +71,7 @@ async function signupAllowed(
   ctx: MutationCtx,
   email: string | undefined,
 ): Promise<boolean> {
-  if (process.env.INVITE_ONLY_SIGNUPS !== "1") return true;
+  if (!inviteOnlySignups()) return true;
   if (!email) return false;
   const allowlist = (process.env.ADMIN_SIGNUP_ALLOWLIST ?? "")
     .split(",")

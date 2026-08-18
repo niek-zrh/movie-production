@@ -7,7 +7,9 @@
 #                  /api/health healthcheck.
 #
 # NEXT_PUBLIC_CONVEX_URL is inlined into the browser bundle at build time —
-# changing it requires a rebuild, not a restart.
+# changing it requires a rebuild, not a restart. The same is true of the
+# Content-Security-Policy: Next evaluates next.config.ts headers() during the
+# build, so the CSP_* / CONVEX origin args below only take effect on rebuild.
 
 # ---------------------------------------------------------------------------
 FROM node:22-alpine AS deps
@@ -34,7 +36,15 @@ CMD ["sh", "-c", "\
 # ---------------------------------------------------------------------------
 FROM deps AS build
 ARG NEXT_PUBLIC_CONVEX_URL
+# Convex HTTP-actions origin + CSP escape hatches — consumed by
+# next.config.ts when it builds the security headers.
+ARG NEXT_PUBLIC_CONVEX_SITE_URL
+ARG CSP_EXTRA_ORIGINS
+ARG CSP_REPORT_ONLY
 ENV NEXT_PUBLIC_CONVEX_URL=$NEXT_PUBLIC_CONVEX_URL \
+    NEXT_PUBLIC_CONVEX_SITE_URL=$NEXT_PUBLIC_CONVEX_SITE_URL \
+    CSP_EXTRA_ORIGINS=$CSP_EXTRA_ORIGINS \
+    CSP_REPORT_ONLY=$CSP_REPORT_ONLY \
     NEXT_TELEMETRY_DISABLED=1
 COPY . .
 # convex/_generated is committed (per Convex docs) so the build typechecks.

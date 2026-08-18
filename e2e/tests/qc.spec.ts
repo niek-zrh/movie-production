@@ -193,10 +193,16 @@ test.describe.serial("delivery QC", () => {
     // N/A still counts as checked — the run just can't pass.
     await expect(page.getByText("24/26 checked")).toBeVisible();
 
-    await naButton.hover();
-    await expect(
-      page.getByText("Required — N/A keeps the run open"),
-    ).toBeVisible();
+    // The click above left the pointer on the button and closed the tooltip;
+    // hovering again from the same spot fires no pointerenter, so the tooltip
+    // would never reopen. Move away first, then hover for real.
+    await expect(async () => {
+      await page.mouse.move(0, 0);
+      await naButton.hover();
+      await expect(
+        page.getByText("Required — N/A keeps the run open"),
+      ).toBeVisible({ timeout: 3_000 });
+    }).toPass({ timeout: 20_000 });
 
     // Tri-state: clicking the active state again resets the check to pending.
     await naButton.click();

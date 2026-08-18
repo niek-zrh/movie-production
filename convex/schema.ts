@@ -147,9 +147,21 @@ export default defineSchema({
     pickedVersionId: v.optional(v.id("versions")),
     coverAssetId: v.optional(v.id("assets")), // thumbnail source for cards
     driveFolderId: v.optional(v.string()), // lazily created Shots/{code}/
+    // Denormalised option count. shots.list backs the Shots page, the Board
+    // AND the Overview; reading every shot's versions to count them blew past
+    // Convex's 4,096-document read ceiling around 4,400 shots. Maintained by
+    // versions.createVersionWithAssetHelper (the single create path); optional
+    // because rows written before the denormalisation have no value yet and
+    // readers default it to 0.
+    versionsCount: v.optional(v.number()),
   })
     .index("by_production", ["productionId"])
     .index("by_production_status", ["productionId", "status"])
+    // Uniqueness check on create and the next `order` — both used to collect
+    // every shot in the production, which hits the same read ceiling as
+    // shots.list did once a production passes a few thousand shots.
+    .index("by_production_code", ["productionId", "code"])
+    .index("by_production_order", ["productionId", "order"])
     .index("by_scene", ["sceneId"])
     .index("by_assignee", ["assigneeId"]),
 
@@ -265,7 +277,11 @@ export default defineSchema({
     targetId: v.string(),
     summary: v.string(), // human-readable one-liner, rendered as-is in feeds
     data: v.optional(v.string()), // JSON string for details
-  }).index("by_production", ["productionId"]),
+  })
+    .index("by_production", ["productionId"])
+    // One target's own history (shot detail History tab) — without it the tab
+    // had to scan the production-wide feed and filter in JS.
+    .index("by_target", ["targetType", "targetId"]),
 
   dailyReports: defineTable({
     productionId: v.id("productions"),

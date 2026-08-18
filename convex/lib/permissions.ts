@@ -73,6 +73,35 @@ const ROLE_CAPS: Record<Role, Capability[]> = {
   viewer: ["comment.create"],
 };
 
+/**
+ * Role seniority, most senior first — the ladder from spec §3. Roles are a
+ * strict order, not a set of peers, so "may X grant role Y" has one answer.
+ */
+const ROLE_ORDER: Role[] = [
+  "owner",
+  "producer",
+  "creative_director",
+  "supervisor",
+  "artist",
+  "viewer",
+];
+
+/** Higher number = more senior. Used only for comparisons, never persisted. */
+export function roleRank(role: Role): number {
+  const index = ROLE_ORDER.indexOf(role);
+  return index === -1 ? 0 : ROLE_ORDER.length - index;
+}
+
+/**
+ * A member may only hand out roles at or below their own rank. Without this,
+ * holding `studio.manage` (producer) is enough to mint an owner — including
+ * yourself — and then demote or remove the real owner. Enforced by
+ * studios.invite, studios.updateMember and studios.removeMember.
+ */
+export function canAssignRole(actorRole: Role, targetRole: Role): boolean {
+  return roleRank(actorRole) >= roleRank(targetRole);
+}
+
 // Extends ConvexError so the message survives production redaction (plain
 // Error messages become "Server Error"; ConvexError data reaches the client).
 export class PermissionError extends ConvexError<string> {
@@ -182,8 +211,10 @@ export function canDecideGate(
 
 /**
  * Version decisions (shortlist/reject/pick): owner/producer/creative_director
- * anywhere; supervisor within stages they are a gate approver of, or on shots
- * assigned to them (spec §3 "within assigned stages").
+ * anywhere; supervisor ONLY within stages they are a gate approver of (spec §3
+ * "within assigned stages"). Assignment deliberately grants nothing here: a
+ * supervisor holds content.edit and can assign shots to themselves, so reading
+ * decision rights off assigneeId let them widen their own scope at will.
  */
 export async function canDecideForShot(
   ctx: QueryCtx | MutationCtx,
@@ -194,7 +225,6 @@ export async function canDecideForShot(
   const role = member.role as Role;
   if (roleHas(role, "version.decide")) return true;
   if (role !== "supervisor") return false;
-  if (shot.assigneeId === userId) return true;
   const stageInstance = await ctx.db
     .query("stageInstances")
     .withIndex("by_production", (q) => q.eq("productionId", shot.productionId))

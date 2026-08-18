@@ -78,6 +78,23 @@ const stageInstanceStatus = v.union(
   v.literal("done"),
 );
 
+/**
+ * Timezones are checked against the runtime (Intl throws a RangeError on an
+ * unknown zone) rather than a hardcoded list, so any IANA name the deployment
+ * supports is accepted. An invalid zone stored here poisons every date-fns-tz
+ * call downstream — it used to abort the hourly reports.cronTick for the whole
+ * deployment — so it must never reach the database.
+ */
+function assertValidTimezone(timezone: string): void {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+  } catch {
+    throw new ConvexError(
+      `"${timezone}" is not a valid timezone. Use an IANA name like Europe/Zurich or Europe/Moscow.`,
+    );
+  }
+}
+
 const STAGE_STATUS_LABEL: Record<
   Doc<"stageInstances">["status"],
   string
@@ -118,6 +135,7 @@ export const create = mutation({
       throw new ConvexError(`Code ${code} is already used in this studio`);
 
     const timezone = args.timezone?.trim() || "Europe/Zurich";
+    assertValidTimezone(timezone);
 
     const productionId = await ctx.db.insert("productions", {
       studioId: args.studioId,
@@ -162,6 +180,37 @@ export const create = mutation({
   },
 });
 
+/**
+ * Budget for the shot reads that build `shotCounts` on the studio home page,
+ * and the ceiling any single production may spend of it. Counting a
+ * production's shots by collecting them costs one read per shot, so eight
+ * productions of 800 shots was 6,400 reads — past Convex's 4,096-document
+ * limit, which killed the first screen everyone in the studio sees. Same
+ * defect class as the old shots.list collect() (see MAX_LIST_SHOTS there).
+ *
+ * The budget is split evenly across the studio's productions, so the page's
+ * shot reads stay under SHOT_COUNT_READ_BUDGET whatever the production count,
+ * and a studio with up to four productions still counts 800 shots each
+ * exactly — comfortably above pilot volume.
+ */
+const SHOT_COUNT_READ_BUDGET = 3200;
+const MAX_COUNTED_SHOTS_PER_PRODUCTION = 800;
+
+/**
+ * Studio home page (app/(app)/page.tsx: status bar + "N shots" label).
+ *
+ * `shotCounts` keeps its shape (CONTRACTS.md §productions.listForStudio) but is
+ * now bounded: it is EXACT while a production has fewer shots than the
+ * per-production ceiling, and SATURATES at it. Once saturated, `total` equals
+ * the ceiling and means "at least this many, true count unknown", and
+ * `byStatus` describes only the first `ceiling` shots in `by_production` order
+ * (i.e. the oldest ones), so the status bar's proportions are a sample, not the
+ * whole production. No denormalised counter tonight — that is the real fix.
+ *
+ * The ceiling is derivable client-side from the returned array length:
+ *   min(800, floor(3200 / productions.length))
+ * so a caller can render "800+" by comparing `total` to it.
+ */
 export const listForStudio = query({
   args: { studioId: v.id("studios") },
   handler: async (ctx, args) => {
@@ -170,21 +219,35 @@ export const listForStudio = query({
       .query("productions")
       .withIndex("by_studio", (q) => q.eq("studioId", args.studioId))
       .collect();
+    const ceiling = Math.max(
+      1,
+      Math.min(
+        MAX_COUNTED_SHOTS_PER_PRODUCTION,
+        Math.floor(SHOT_COUNT_READ_BUDGET / Math.max(1, productions.length)),
+      ),
+    );
     return await Promise.all(
       productions.map(async (production) => {
-        const shots = await ctx.db
+        // Stream the index and stop at the ceiling instead of collect()ing the
+        // table — the repo pattern (convex/shots.ts list, convex/activity.ts
+        // feed). No enrichment here, so one read per shot counted.
+        const byStatus: Record<string, number> = {};
+        let total = 0;
+        for await (const shot of ctx.db
           .query("shots")
           .withIndex("by_production", (q) =>
             q.eq("productionId", production._id),
-          )
-          .collect();
-        const byStatus: Record<string, number> = {};
-        for (const shot of shots) {
+          )) {
           byStatus[shot.status] = (byStatus[shot.status] ?? 0) + 1;
+          total += 1;
+          if (total >= ceiling) break;
         }
         return {
           ...publicProduction(production),
-          shotCounts: { total: shots.length, byStatus },
+          shotCounts: { total, byStatus },
+          // Additive: lets the home page render "800+" instead of quietly
+          // presenting a saturated count as the real one.
+          shotCountsCapped: total >= ceiling,
         };
       }),
     );
@@ -241,6 +304,7 @@ export const update = mutation({
     if (args.timezone !== undefined) {
       timezone = args.timezone.trim();
       if (timezone.length === 0) throw new ConvexError("Timezone cannot be empty");
+      assertValidTimezone(timezone);
       if (timezone !== production.timezone)
         changes.push(`timezone → ${timezone}`);
       else timezone = undefined;

@@ -16,10 +16,10 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
     ],
   },
   {
-    title: "Shots",
+    title: "Shots & files",
     keys: [
       ["N", "New shot"],
-      ["E", "Edit inline"],
+      ["/", "Search files"],
     ],
   },
   {
@@ -30,6 +30,7 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
       ["S", "Shortlist"],
       ["X", "Reject"],
       ["P", "Pick"],
+      ["0", "Reset zoom"],
       ["F", "Fullscreen"],
       ["Esc", "Back to queue"],
     ],
@@ -68,6 +69,10 @@ export function KeyboardOverlay({
             </div>
           ))}
         </div>
+        <p className="text-xs text-muted-foreground">
+          Letter and digit shortcuts match the physical key, so a Russian
+          (ЙЦУКЕН) layout triggers the same actions as an English one.
+        </p>
       </DialogContent>
     </Dialog>
   );

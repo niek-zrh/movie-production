@@ -286,18 +286,29 @@ test.describe.serial("team", () => {
     },
   );
 
+  // Removal revokes studio-wide access instantly, so it confirms first.
   test("owner removes the member", async () => {
     const row = ownerPage.getByRole("row").filter({ hasText: artistEmail });
-    await row.getByRole("button", { name: "Remove" }).click();
+    await row.getByRole("button", { name: "Remove", exact: true }).click();
+    await ownerPage
+      .getByRole("button", { name: "Remove member", exact: true })
+      .click();
     await expect(row).toHaveCount(0);
   });
 
   test("owner cannot remove themselves", async () => {
     const ownRow = ownerPage.getByRole("row").filter({ hasText: ownerEmail });
-    await ownRow.getByRole("button", { name: "Remove" }).click();
+    await ownRow.getByRole("button", { name: "Remove", exact: true }).click();
+    await ownerPage
+      .getByRole("button", { name: "Remove member", exact: true })
+      .click();
     await expect(
       ownerPage.getByText(/can't remove yourself/).first(),
     ).toBeVisible();
+    // The dialog deliberately stays open on failure so the toast reads next to
+    // it; close it first, or the open modal hides the table from the a11y tree
+    // and the row lookup below finds nothing.
+    await ownerPage.getByRole("button", { name: "Cancel" }).click();
     // Row is still there.
     await expect(ownRow).toHaveCount(1);
     expect(ownerErrors.filter(

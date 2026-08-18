@@ -127,6 +127,9 @@ function ShotsScreen() {
             {shots !== undefined && (
               <span className="ml-2 font-sans text-sm font-normal text-muted-foreground">
                 {shots.length}
+                {/* shots.list caps at MAX_LIST_SHOTS so a huge production can
+                    still open; say so rather than quietly showing a subset. */}
+                {shots.length >= 1000 && " (first 1000 — narrow with a filter)"}
               </span>
             )}
           </h1>
