@@ -31,7 +31,20 @@ export default function middleware(
   request: NextRequest,
   event: NextFetchEvent,
 ) {
-  if (request.nextUrl.protocol === "http:") {
+  const url = new URL(request.url);
+  const host = request.headers.get("host");
+  let changed = false;
+
+  // Next standalone can build request.url from its BIND address
+  // (http://0.0.0.0:8090/…) instead of the routed host — any redirect built
+  // from it then leaks an unreachable internal URL to the browser. The Host
+  // header always carries the real external host; restore it.
+  if (host !== null && host !== "" && url.host !== host) {
+    url.host = host;
+    changed = true;
+  }
+
+  if (url.protocol === "http:") {
     // Signal 1: the proxy says the client connection was TLS. (Traefik only
     // forwards this truthfully when it trusts the upstream, so don't rely on
     // it alone.)
@@ -40,10 +53,9 @@ export default function middleware(
     // Signal 2: the browser's own Origin header is https for the SAME host.
     // That is exactly the false-positive the auth proxy 403s on; a genuinely
     // cross-origin request still fails its host comparison either way.
-    if (!upgrade) {
+    if (!upgrade && host !== null) {
       const origin = request.headers.get("origin");
-      const host = request.headers.get("host");
-      if (origin !== null && host !== null) {
+      if (origin !== null) {
         try {
           const originUrl = new URL(origin);
           upgrade = originUrl.protocol === "https:" && originUrl.host === host;
@@ -53,11 +65,12 @@ export default function middleware(
       }
     }
     if (upgrade) {
-      const url = new URL(request.url);
       url.protocol = "https:";
-      request = new NextRequest(url, request);
+      changed = true;
     }
   }
+
+  if (changed) request = new NextRequest(url, request);
   return authMiddleware(request, event);
 }
 
