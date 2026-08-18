@@ -95,9 +95,7 @@ Do this before the pilot so files live in the studio's own Drive.
    - `<convex-site-url>/api/auth/callback/google` (sign-in)
    - `<convex-site-url>/google/drive/callback` (Drive connect)
 4. **Credentials → API key**, restricted to the Picker API (browser).
-5. Note the **project number** (Console dashboard) — the Picker `appId`.
-   Wrong value = picked files are NOT granted to the app (classic gotcha).
-6. Set the env vars:
+5. Set the env vars:
 
 ```bash
 # on the Convex deployment:
@@ -106,11 +104,24 @@ npx convex env set AUTH_GOOGLE_SECRET <oauth-client-secret>
 npx convex env set GOOGLE_DRIVE_CLIENT_ID <oauth-client-id>      # may reuse
 npx convex env set GOOGLE_DRIVE_CLIENT_SECRET <oauth-client-secret>
 npx convex env set GOOGLE_PICKER_API_KEY <api-key>
-
-# in .env.local (browser):
-NEXT_PUBLIC_GOOGLE_API_KEY=<api-key>
-NEXT_PUBLIC_GOOGLE_APP_ID=<project-NUMBER>
 ```
+
+That is the whole inventory — nothing Google-related belongs in `.env.local`.
+The browser never sees these: the Picker gets its `apiKey`, a short-lived
+access token and the `appId` from `drive.getPickerConfig`, which derives the
+`appId` from the numeric prefix of the OAuth client id (that prefix *is* the
+GCP project number).
+
+**What this costs: nothing.** The OAuth client id/secret and the Picker API
+key identify *this application* to Google — they are not metered and they do
+not require a billing account on the GCP project. Sign in with Google, the
+Drive API and the Picker API are free; they have per-day quotas, not charges.
+One client serves the whole studio: every member signs in with their own
+Google account, and each person's Drive connection is stored per-user.
+
+If the studio runs on Google Workspace, create the OAuth client as **Internal**
+— then only Workspace accounts can use it and Google requires no app
+verification at all.
 
 Then in the app: production **Settings → Drive hub → Connect Google Drive**
 → choose where the hub lives → the folder tree is scaffolded and shared with
