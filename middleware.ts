@@ -17,7 +17,8 @@ export default convexAuthNextjsMiddleware(async (request, { convexAuth }) => {
 });
 
 export const config = {
-  // /api is excluded: the only Next API route is the container healthcheck,
-  // which must respond without an auth round-trip to Convex.
-  matcher: ["/((?!.*\\..*|_next|api/).*)", "/"],
+  // Excludes ONLY /api/health (the container healthcheck must answer without
+  // an auth round-trip to Convex). /api/auth stays matched — Convex Auth's
+  // middleware serves the cookie-exchange proxy on it.
+  matcher: ["/((?!.*\\..*|_next|api/health).*)", "/"],
 };
