@@ -50,6 +50,9 @@ services:
     environment:
       # Read at runtime by any server-rendered route.
       NEXT_PUBLIC_CONVEX_URL: ${NEXT_PUBLIC_CONVEX_URL:-${NEXT_PUBLIC_DEPLOYMENT_URL:-https://api.kinolab.ai}}
+      # This deployment is only ever reached via TLS-terminating proxies;
+      # the middleware uses this to keep redirect URLs on https.
+      FORCE_HTTPS: ${FORCE_HTTPS:-1}
     networks:
       - dokploy-network
     labels:

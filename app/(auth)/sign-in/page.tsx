@@ -35,11 +35,19 @@ export default function SignInPage() {
       // Full navigation (not router.push): the fresh auth cookie must be
       // visible to the middleware, which an immediate RSC navigation can race.
       window.location.assign("/");
-    } catch {
+    } catch (err) {
+      // App-authored ConvexError messages (e.g. invite-only sign-ups) beat
+      // the generic copy.
+      const message = err instanceof Error ? err.message : "";
+      const server = /ConvexError:\s*([^\n]+?)(?:\s+at\s.*)?$/m
+        .exec(message)?.[1]
+        ?.trim();
       setError(
-        flow === "signIn"
-          ? "Wrong email or password. New here? Switch to create account."
-          : "Could not create the account. An account with this email may already exist — try signing in. Passwords need at least 8 characters.",
+        server && server.length <= 200
+          ? server
+          : flow === "signIn"
+            ? "Wrong email or password. New here? Switch to create account."
+            : "Could not create the account. An account with this email may already exist — try signing in. Passwords need at least 8 characters.",
       );
       setBusy(false);
     }

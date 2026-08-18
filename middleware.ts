@@ -38,20 +38,34 @@ export default function middleware(
   // Next standalone can build request.url from its BIND address
   // (http://0.0.0.0:8090/…) instead of the routed host — any redirect built
   // from it then leaks an unreachable internal URL to the browser. The Host
-  // header always carries the real external host; restore it.
+  // header always carries the real external host; restore it. NOTE: the URL
+  // host setter keeps an existing port when the new value has none, so the
+  // port must be cleared explicitly.
   if (host !== null && host !== "" && url.host !== host) {
     url.host = host;
+    if (!host.includes(":")) url.port = "";
     changed = true;
   }
 
   if (url.protocol === "http:") {
-    // Signal 1: the proxy says the client connection was TLS. (Traefik only
-    // forwards this truthfully when it trusts the upstream, so don't rely on
-    // it alone.)
-    const forwardedProto = request.headers.get("x-forwarded-proto");
-    let upgrade = forwardedProto?.split(",")[0]?.trim() === "https";
-    // Signal 2: the browser's own Origin header is https for the SAME host.
-    // That is exactly the false-positive the auth proxy 403s on; a genuinely
+    // Signal 1: explicit deployment setting (set FORCE_HTTPS=1 wherever the
+    // app is only ever served via TLS-terminating proxies).
+    let upgrade = process.env.FORCE_HTTPS === "1";
+    // Signal 2: the proxy says the client connection was TLS. (Traefik only
+    // forwards this truthfully when it trusts the upstream.)
+    if (!upgrade) {
+      const forwardedProto = request.headers.get("x-forwarded-proto");
+      upgrade = forwardedProto?.split(",")[0]?.trim() === "https";
+    }
+    // Signal 3: Cloudflare's cf-visitor header — Traefik passes custom
+    // headers through even when it rewrites x-forwarded-proto.
+    if (!upgrade) {
+      upgrade =
+        request.headers.get("cf-visitor")?.includes('"scheme":"https"') ===
+        true;
+    }
+    // Signal 4: the browser's own Origin header is https for the SAME host —
+    // exactly the false-positive the auth proxy 403s on; a genuinely
     // cross-origin request still fails its host comparison either way.
     if (!upgrade && host !== null) {
       const origin = request.headers.get("origin");
