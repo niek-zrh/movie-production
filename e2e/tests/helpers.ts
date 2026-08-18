@@ -8,6 +8,27 @@ import { expect, type Browser, type BrowserContext, type Page } from "@playwrigh
 
 export const PASSWORD = "slate-e2e-password-1";
 
+/**
+ * `page.goto` that survives a navigation already in flight. The sign-in page
+ * finishes with `window.location.assign("/")` and the middleware redirects on
+ * top of that, so a goto issued into either one dies with
+ * "net::ERR_ABORTED; maybe frame was detached" — a harness race, not a product
+ * bug, and the single most common source of flakes in this suite.
+ */
+export async function gotoStable(page: Page, path: string) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ok = await page
+      .goto(path)
+      .then(() => true)
+      .catch(() => false);
+    if (ok) return;
+    await page.waitForTimeout(400);
+  }
+  // Out of retries: let a genuine navigation failure surface as itself.
+  await page.goto(path);
+}
+
+
 let counter = 0;
 export function uniqueEmail(tag: string): string {
   counter += 1;
@@ -16,7 +37,7 @@ export function uniqueEmail(tag: string): string {
 
 /** Sign UP a brand-new user; lands on / (create-studio screen or studio home). */
 export async function signUp(page: Page, name: string, email: string) {
-  await page.goto("/sign-in");
+  await gotoStable(page, "/sign-in");
   // Hydration-safe: retry the toggle until the name field actually appears.
   await expect(async () => {
     await page.getByText("New here? Create an account").click();
@@ -31,7 +52,7 @@ export async function signUp(page: Page, name: string, email: string) {
 
 /** Sign IN an existing user. */
 export async function signIn(page: Page, email: string) {
-  await page.goto("/sign-in");
+  await gotoStable(page, "/sign-in");
   await page.fill("#email", email);
   await page.fill("#password", PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
@@ -53,7 +74,7 @@ export async function createProduction(
   name: string,
   opts: { episodic?: boolean; episodes?: number } = {},
 ): Promise<string> {
-  await page.goto("/new");
+  await gotoStable(page, "/new");
   await page.getByLabel(/name/i).first().fill(name);
   if (opts.episodic) {
     await page.getByRole("button", { name: /episodic/i }).click();
@@ -78,7 +99,7 @@ export async function createProduction(
  * both scoped so the two copies of the form can't be confused.
  */
 export async function bulkCreateShots(page: Page, base: string, codes: string[]) {
-  await page.goto(`${base}/shots`);
+  await gotoStable(page, `${base}/shots`);
   await page.waitForLoadState("networkidle");
   const inline = page.getByLabel("Shot codes");
   if (await inline.count()) {
@@ -117,7 +138,7 @@ export async function uploadOptions(page: Page, n: number) {
  * rolelabel: "Producer" | "Creative Director" | "Supervisor" | "Artist" | "Viewer"
  */
 export async function inviteMember(page: Page, email: string, roleLabel: string) {
-  await page.goto("/team");
+  await gotoStable(page, "/team");
   await page.getByRole("button", { name: /Invite member/i }).click();
   await page.fill("#invite-email", email);
   const dialog = page.locator('[role="dialog"]');

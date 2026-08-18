@@ -64,7 +64,15 @@ async function inviteMemberLocal(page: Page, email: string, roleLabel: string) {
  */
 async function gotoSignedIn(page: Page, email: string, path: string) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    await page.goto(path);
+    // The sign-in page finishes with window.location.assign("/"), and the
+    // middleware redirects on top of that — a goto issued into either one
+    // dies with "net::ERR_ABORTED; maybe frame was detached". That is what
+    // this loop exists to survive, so the goto has to be inside it.
+    const navigated = await page
+      .goto(path)
+      .then(() => true)
+      .catch(() => false);
+    if (!navigated) continue;
     if (/\/sign-in/.test(page.url())) {
       await waitForSignInHydration(page);
       await page.fill("#email", email);
