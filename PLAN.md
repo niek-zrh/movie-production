@@ -54,6 +54,30 @@ Playwright end-to-end run in `e2e/`).
 - [x] Adversarial multi-agent review (24 findings raised, 21 confirmed, all
       confirmed fixes applied — see DECISIONS.md)
 
+## M6 — Go-live hardening ✅ (2026-08-19)
+Full production-readiness review before the pilot: 14 test suites plus a
+45-agent code audit across 12 dimensions, every finding adversarially refuted
+and independently re-confirmed. 8 blockers found, all fixed and re-verified.
+- [x] Studio takeover closed — roles have a rank; nobody grants a role above
+      their own or changes their own (F1)
+- [x] Sign-up gate fails CLOSED (open registration was the shipped default)
+- [x] `seed:run` made internal — it was anonymously callable and plants
+      claimable owner/producer invites
+- [x] Review Room works on a Cyrillic keyboard (hotkeys match the physical
+      key) and Pick/Shortlist/Reject are clickable — `versions.pick` had no
+      button anywhere (F7)
+- [x] Daily-report cron isolated per production + timezones validated; one bad
+      row silently killed every report (F10)
+- [x] Error boundaries — a stale link or forbidden production blanked the app
+- [x] Every unbounded query bounded; a production died past ~4k shots. Shots
+      can now be deleted and bulk paste is capped (F5)
+- [x] Nightly `convex export` + documented restore; images pinned
+- [x] Security headers + CSP + host allowlist, verified on the built image
+- [x] `pnpm test:api` — 124-check server-side suite (six-role matrix, tenant
+      isolation, concurrency, limits) the browser suite could not express
+- [ ] Google Drive live end-to-end — still blocked on the GCP OAuth client
+      (README §Google setup); do not enable for the pilot until exercised
+
 ## Post-pilot backlog
 See DECISIONS.md parking lot (resource planning first, Telegram fan-out,
 video preview pipeline).
