@@ -51,11 +51,39 @@ function assertUsableTimezone(production: Doc<"productions">): void {
   }
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Exclusive `_creationTime` upper bound for local date `date`: UTC midnight of
+ * the day after, padded by a further day. Real UTC offsets run -12…+14, so the
+ * local day can end at most 12h after that midnight and the pad covers it twice
+ * over. Deliberately generous: membership is still decided exactly by
+ * localDate() below, so a loose bound only costs a few extra reads and can
+ * never drop a row. `null` when `date` is not a parseable ISO day — the scan
+ * then falls back to the newest-first walk alone, which still terminates.
+ */
+function dayScanUpperBound(date: string): number | null {
+  const utcMidnight = Date.parse(`${date}T00:00:00Z`);
+  return Number.isNaN(utcMidnight) ? null : utcMidnight + 2 * DAY_MS;
+}
+
 /**
  * All activity rows of a production whose _creationTime falls on local date
- * `date` in the production's timezone, oldest first. Filtering every row
- * through formatInTimeZone is the simplest correct day-window computation at
- * pilot scale — no epoch math.
+ * `date` in the production's timezone, oldest first.
+ *
+ * This used to .collect() the whole activity table and filter in JS. Activity
+ * grows forever, so both the daily report and reports.get walked all of history
+ * and died at Convex's 4,096-document read ceiling (measured: reports.get gone
+ * at ~8,400 rows). The index streams in _creationTime order, so instead we walk
+ * NEWEST-FIRST from an upper bound just past the day and stop at the first row
+ * that lands on an earlier local date — nothing older can belong to `date`.
+ * Reads are therefore bounded by the day itself plus the pad, not by history.
+ *
+ * Nothing is capped or truncated: the returned rows, their order and everything
+ * computed from them (stats tiles, highlights) are byte-identical to the old
+ * filter. A single local day holding more rows than the read ceiling would
+ * still fail — that needs pre-aggregation, not a cap, and is out of scope
+ * tonight.
  */
 async function activityForLocalDate(
   ctx: QueryCtx | MutationCtx,
@@ -63,11 +91,25 @@ async function activityForLocalDate(
   timezone: string,
   date: string,
 ): Promise<Doc<"activity">[]> {
-  const rows = await ctx.db
+  const upperBound = dayScanUpperBound(date);
+  const stream = ctx.db
     .query("activity")
-    .withIndex("by_production", (q) => q.eq("productionId", productionId))
-    .collect();
-  return rows.filter((row) => localDate(timezone, row._creationTime) === date);
+    .withIndex("by_production", (q) => {
+      const base = q.eq("productionId", productionId);
+      return upperBound === null ? base : base.lt("_creationTime", upperBound);
+    })
+    .order("desc");
+
+  // "yyyy-MM-dd" strings compare lexicographically in chronological order.
+  const rows: Doc<"activity">[] = [];
+  for await (const row of stream) {
+    const rowDate = localDate(timezone, row._creationTime);
+    if (rowDate > date) continue; // inside the pad, keep walking back
+    if (rowDate < date) break; // past the start of the local day
+    rows.push(row);
+  }
+  rows.reverse(); // stream was newest-first; callers expect oldest first
+  return rows;
 }
 
 const isHighlightPriority = (row: Doc<"activity">): boolean =>

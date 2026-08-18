@@ -131,6 +131,16 @@ export function LedgerSection({
               ))}
             </TableBody>
           </Table>
+          {/* approvals.ledger returns the newest MAX_LEDGER_ROWS decisions so
+              the page can never hit Convex's read limit — say so rather than
+              letting older history disappear silently. */}
+          {ledger.length >= 500 && (
+            <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+              Showing the 500 most recent decisions — the CSV exports the same
+              500. Older decisions are still recorded; narrow the scope to see
+              further back.
+            </p>
+          )}
         </div>
       )}
     </section>

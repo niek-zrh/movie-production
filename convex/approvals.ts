@@ -17,7 +17,26 @@ import { STAGE_BY_KEY } from "./lib/domain";
 /** Enriched user shape used across returns (CONTRACTS.md). */
 type UserRef = { _id: Id<"users">; name: string; image?: string };
 
-async function userRef(
+/** Label + href pair returned for an approval's target (CONTRACTS.md). */
+type TargetInfo = { targetLabel: string; href: string };
+
+/**
+ * Per-call document memo. A ledger page is the same handful of approvers and
+ * the same shots over and over, and every ctx.db.get counts against Convex's
+ * 4,096-read ceiling — so each user/target document is fetched exactly once
+ * per call. Promises (not results) are cached, so rows enriched concurrently
+ * share one read.
+ */
+type LedgerCache = {
+  users: Map<string, Promise<UserRef>>;
+  targets: Map<string, Promise<TargetInfo>>;
+};
+
+function newLedgerCache(): LedgerCache {
+  return { users: new Map(), targets: new Map() };
+}
+
+async function loadUserRef(
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
 ): Promise<UserRef> {
@@ -29,15 +48,45 @@ async function userRef(
   };
 }
 
+function userRef(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<"users">,
+  cache: Map<string, Promise<UserRef>>,
+): Promise<UserRef> {
+  const cached = cache.get(userId);
+  if (cached !== undefined) return cached;
+  const pending = loadUserRef(ctx, userId);
+  cache.set(userId, pending);
+  return pending;
+}
+
 /**
  * Human-readable label + app href for an approval's target, shared by
- * `myPending` and `ledger`.
+ * `myPending` and `ledger`. `cache` is optional: `ledger` passes one so a
+ * shot picked ten times is read once (a pick costs the version *and* its
+ * shot); `myPending` has a handful of rows and passes none.
  */
-async function targetInfo(
+function targetInfo(
   ctx: QueryCtx | MutationCtx,
   approval: Doc<"approvals">,
   production: Doc<"productions">,
-): Promise<{ targetLabel: string; href: string }> {
+  cache?: Map<string, Promise<TargetInfo>>,
+): Promise<TargetInfo> {
+  // Production is part of the key: `myPending` spans productions and the href
+  // is production-scoped.
+  const key = `${production._id}:${approval.scope}:${approval.targetId}`;
+  const cached = cache?.get(key);
+  if (cached !== undefined) return cached;
+  const pending = loadTargetInfo(ctx, approval, production);
+  cache?.set(key, pending);
+  return pending;
+}
+
+async function loadTargetInfo(
+  ctx: QueryCtx | MutationCtx,
+  approval: Doc<"approvals">,
+  production: Doc<"productions">,
+): Promise<TargetInfo> {
   const base = `/p/${production._id}`;
   switch (approval.scope) {
     case "stage_gate": {
@@ -315,6 +364,30 @@ export const myPending = query({
   },
 });
 
+/**
+ * Hard bounds on one ledger() call. Convex refuses a function that reads more
+ * than 4,096 documents, and this query backs the whole Decisions page plus its
+ * CSV export (spec F9). Every pick writes an approval, so the old unbounded
+ * collect() — plus up to four enrichment reads per row — was the same time
+ * bomb that killed shots.list: past a few thousand decisions the page dies for
+ * good. We stream by_production newest-first and stop at MAX_LEDGER_ROWS rows
+ * after looking at no more than MAX_LEDGER_SCAN approvals, so the worst case
+ * is 1,500 + 4 x 500 = 3,500 reads whatever the data looks like.
+ *
+ * What happens at the ceiling: the newest MAX_LEDGER_ROWS decisions matching
+ * the scope are returned, oldest-first history is what falls off, and the CSV
+ * exports exactly the rows shown. The row shape is fixed by CONTRACTS.md, so
+ * the truncation signal is the length itself — `rows.length === 500` means
+ * "there may be older decisions"; the UI does not surface that yet (follow-up:
+ * paging the ledger, which needs a shape change).
+ *
+ * The scan bound only bites with a scope filter: a filtered view searches the
+ * newest MAX_LEDGER_SCAN approvals of the production, not all history, so a
+ * rare scope on a very long ledger can come back short of its own cap.
+ */
+const MAX_LEDGER_ROWS = 500;
+const MAX_LEDGER_SCAN = 1500;
+
 export const ledger = query({
   args: {
     productionId: v.id("productions"),
@@ -332,27 +405,43 @@ export const ledger = query({
       ctx,
       args.productionId,
     );
-    let rows = await ctx.db
+    const scope = args.scope;
+    // Index order is creation order, so .order("desc") already yields the
+    // newest-first ordering the ledger table and the CSV export assert on —
+    // no post-sort, and the cap therefore drops the oldest rows, not a
+    // random slice.
+    const stream = ctx.db
       .query("approvals")
       .withIndex("by_production", (q) =>
         q.eq("productionId", args.productionId),
       )
-      .collect();
-    if (args.scope !== undefined) {
-      rows = rows.filter((r) => r.scope === args.scope);
+      .order("desc");
+
+    const rows: Doc<"approvals">[] = [];
+    let scanned = 0;
+    for await (const approval of stream) {
+      scanned += 1;
+      if (scope === undefined || approval.scope === scope) rows.push(approval);
+      if (rows.length >= MAX_LEDGER_ROWS || scanned >= MAX_LEDGER_SCAN) break;
     }
-    rows.sort((a, b) => b._creationTime - a._creationTime);
+
+    const cache = newLedgerCache();
     return await Promise.all(
       rows.map(async (approval) => {
         const { targetLabel, href } = await targetInfo(
           ctx,
           approval,
           production,
+          cache.targets,
         );
         return {
           ...approval,
-          requestedByUser: await userRef(ctx, approval.requestedBy),
-          approverUser: await userRef(ctx, approval.approverId),
+          requestedByUser: await userRef(
+            ctx,
+            approval.requestedBy,
+            cache.users,
+          ),
+          approverUser: await userRef(ctx, approval.approverId, cache.users),
           targetLabel,
           href,
         };

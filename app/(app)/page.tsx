@@ -77,7 +77,11 @@ export default function StudioHomePage() {
                 </div>
                 <ShotBar byStatus={p.shotCounts.byStatus} total={p.shotCounts.total} />
                 <p className="text-xs text-muted-foreground">
-                  {p.shotCounts.total} shots
+                  {/* listForStudio bounds how many shots it counts per
+                      production, so say "800+" rather than showing a
+                      saturated count as if it were the real one. */}
+                  {p.shotCounts.total}
+                  {p.shotCountsCapped ? "+" : ""} shots
                 </p>
               </Card>
             </Link>

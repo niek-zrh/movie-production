@@ -34,7 +34,7 @@ import {
   type ShotStatusKey,
   type StageKey,
 } from "@/convex/lib/domain";
-import { formatDay } from "@/lib/format";
+import { formatDay, isCommittableDueDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { OptionsTab } from "./_components/options-tab";
 import { DiscussionTab } from "./_components/discussion-tab";
@@ -261,7 +261,10 @@ export default function ShotDetailPage() {
               value={shot.dueDate ?? ""}
               onChange={(e) => {
                 const value = e.target.value;
-                if (/^\d{4}-\d{2}-\d{2}$/.test(value))
+                // Typing a year fires change per digit ("0002-09-01" …), and
+                // every write also logs an activity row — only commit a date
+                // that could actually be a due date.
+                if (isCommittableDueDate(value))
                   void updateShot({ shotId, dueDate: value }).catch(
                     showMutationError,
                   );

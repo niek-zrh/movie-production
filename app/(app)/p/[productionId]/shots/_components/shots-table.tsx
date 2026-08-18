@@ -28,7 +28,7 @@ import {
   WORKING_STATUSES,
   type ShotStatusKey,
 } from "@/convex/lib/domain";
-import { todayInTz } from "@/lib/format";
+import { isCommittableDueDate, todayInTz } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   isContentEditor,
@@ -385,6 +385,10 @@ function DueDateCell({
         onChange={(e) => {
           const next = e.target.value;
           if (next === (shot.dueDate ?? "")) return;
+          // Clearing is always meaningful; a partial date is not — the native
+          // input fires change per typed digit, so half-typed years used to be
+          // saved and logged to the ledger on the way to the real date.
+          if (next !== "" && !isCommittableDueDate(next)) return;
           void updateShot({
             shotId: shot._id,
             dueDate: next === "" ? null : next,

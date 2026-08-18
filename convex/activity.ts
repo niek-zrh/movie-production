@@ -25,6 +25,26 @@ async function getUserRef(
 }
 
 /**
+ * Hard bound on rows SCANNED by one feed() call. The stream already breaks at
+ * `limit`, but `types` / `actorId` are matched in JS while it streams, so a
+ * filter that matches little or nothing (the Review page asks for
+ * `version.picked` only) walked the whole activity table — and past 4,096 rows
+ * Convex hard-fails the query, permanently killing the page for that
+ * production.
+ *
+ * At most MAX_FEED_SCAN rows plus the actor lookups (memoised, so at most one
+ * per distinct actor in the returned page) are read, which stays inside the
+ * ceiling on any table size.
+ *
+ * What happens at the ceiling: the feed returns only the matches found in the
+ * newest MAX_FEED_SCAN rows — possibly fewer than `limit`, possibly none —
+ * instead of failing. Both call sites want recent activity (Overview: last 15;
+ * Review: today's picks), which lives at the head of the index, and `beforeTs`
+ * still pages further back a bounded window at a time.
+ */
+const MAX_FEED_SCAN = 2000;
+
+/**
  * Activity feed for a production, newest first. Optional `types` / `actorId`
  * filters are applied in JS after the indexed scan; `beforeTs` pages older
  * rows via a `_creationTime` upper bound on the index range.
@@ -52,11 +72,19 @@ export const feed = query({
       .order("desc");
 
     const rows: Doc<"activity">[] = [];
+    let scanned = 0;
     for await (const row of stream) {
-      if (args.types !== undefined && !args.types.includes(row.type)) continue;
-      if (args.actorId !== undefined && row.actorId !== args.actorId) continue;
-      rows.push(row);
-      if (rows.length >= limit) break;
+      scanned++;
+      const matched =
+        (args.types === undefined || args.types.includes(row.type)) &&
+        (args.actorId === undefined || row.actorId === args.actorId);
+      if (matched) {
+        rows.push(row);
+        if (rows.length >= limit) break;
+      }
+      // Bound the scan, not just the result — a filter matching nothing must
+      // stop here rather than read the table to exhaustion (see above).
+      if (scanned >= MAX_FEED_SCAN) break;
     }
 
     const cache = new Map<Id<"users">, UserRef>();
