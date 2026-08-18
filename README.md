@@ -147,8 +147,8 @@ The pilot environment:
 | What | URL |
 |---|---|
 | Frontend (this compose, via Traefik) | `https://pilot.kinolab.ai` |
-| Convex backend API (`CONVEX_CLOUD_ORIGIN`) | `https://api.pilot.kinolab.ai` |
-| Convex HTTP actions (`CONVEX_SITE_ORIGIN`) | `https://actions.pilot.kinolab.ai` |
+| Convex backend API (`CONVEX_CLOUD_ORIGIN`) | `https://api.kinolab.ai` |
+| Convex HTTP actions (`CONVEX_SITE_ORIGIN`) | `https://actions.kinolab.ai` |
 
 Prerequisites: the self-hosted Convex backend (official
 `ghcr.io/get-convex/convex-backend` compose) running with the two origins
@@ -160,9 +160,9 @@ Environment (in Dokploy's compose Environment tab — the compose also accepts
 dashboard's variable):
 
 ```bash
-CONVEX_SELF_HOSTED_URL=https://api.pilot.kinolab.ai
+CONVEX_SELF_HOSTED_URL=https://api.kinolab.ai
 CONVEX_SELF_HOSTED_ADMIN_KEY=<never commit this>
-NEXT_PUBLIC_CONVEX_URL=https://api.pilot.kinolab.ai  # inlined at build → rebuild to change
+NEXT_PUBLIC_CONVEX_URL=https://api.kinolab.ai  # inlined at build → rebuild to change
 ```
 
 One-time backend setup (from any machine, with those two `CONVEX_SELF_*`
@@ -178,8 +178,8 @@ The frontend serves on port 8090 with `GET /api/health` as the container
 healthcheck; Traefik routes `pilot.kinolab.ai` to it. Google OAuth redirect
 URIs for this environment point at the **actions origin**:
 
-- `https://actions.pilot.kinolab.ai/api/auth/callback/google` (sign-in)
-- `https://actions.pilot.kinolab.ai/google/drive/callback` (Drive connect)
+- `https://actions.kinolab.ai/api/auth/callback/google` (sign-in)
+- `https://actions.kinolab.ai/google/drive/callback` (Drive connect)
 
 (Inside Convex functions, `CONVEX_SITE_URL` is populated from the backend's
 `CONVEX_SITE_ORIGIN`, so the app builds these URLs automatically.)
