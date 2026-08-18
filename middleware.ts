@@ -31,11 +31,32 @@ export default function middleware(
   request: NextRequest,
   event: NextFetchEvent,
 ) {
-  const forwardedProto = request.headers.get("x-forwarded-proto");
-  if (forwardedProto === "https" && request.nextUrl.protocol === "http:") {
-    const url = new URL(request.url);
-    url.protocol = "https:";
-    request = new NextRequest(url, request);
+  if (request.nextUrl.protocol === "http:") {
+    // Signal 1: the proxy says the client connection was TLS. (Traefik only
+    // forwards this truthfully when it trusts the upstream, so don't rely on
+    // it alone.)
+    const forwardedProto = request.headers.get("x-forwarded-proto");
+    let upgrade = forwardedProto?.split(",")[0]?.trim() === "https";
+    // Signal 2: the browser's own Origin header is https for the SAME host.
+    // That is exactly the false-positive the auth proxy 403s on; a genuinely
+    // cross-origin request still fails its host comparison either way.
+    if (!upgrade) {
+      const origin = request.headers.get("origin");
+      const host = request.headers.get("host");
+      if (origin !== null && host !== null) {
+        try {
+          const originUrl = new URL(origin);
+          upgrade = originUrl.protocol === "https:" && originUrl.host === host;
+        } catch {
+          // Malformed Origin — leave the request untouched.
+        }
+      }
+    }
+    if (upgrade) {
+      const url = new URL(request.url);
+      url.protocol = "https:";
+      request = new NextRequest(url, request);
+    }
   }
   return authMiddleware(request, event);
 }
