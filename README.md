@@ -203,6 +203,24 @@ FORCE_HTTPS=1                                       # served only via TLS proxie
 reads, on all four surfaces: frontend build args, frontend runtime, the Convex
 deployment (`npx convex env set …`) and the backend compose project.
 
+> **These planes are not interchangeable — this is the easiest thing to get
+> wrong.** Anything read by code under `convex/` (the Google credentials,
+> `INVITE_ONLY_SIGNUPS`, `ADMIN_SIGNUP_ALLOWLIST`, `SITE_URL`, the JWT keys)
+> lives in the **Convex deployment's own** environment and is set with
+> `npx convex env set` or in the Convex dashboard. Putting those in Dokploy's
+> Environment tab, in `docker-compose.yml`, or in the backend compose project's
+> `.env` sets them on *containers* — Convex functions never see them, and the
+> symptom is silence: Google sign-in simply doesn't appear, Drive reports "not
+> configured yet". Verify what the deployment actually has:
+>
+> ```bash
+> export CONVEX_SELF_HOSTED_URL=https://api.kinolab.ai
+> export CONVEX_SELF_HOSTED_ADMIN_KEY=<from generate_admin_key.sh>
+> npx convex env list
+> ```
+>
+> Convex env changes take effect immediately — no rebuild, no redeploy.
+
 One-time backend setup (from any machine, with those two `CONVEX_SELF_*`
 vars exported):
 

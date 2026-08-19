@@ -18,8 +18,18 @@ export const FOLDER_MIME = "application/vnd.google-apps.folder";
 export const FILE_FIELDS =
   "id,name,mimeType,size,md5Checksum,webViewLink,trashed,thumbnailLink";
 
+/**
+ * Names the ENV PLANE, not just the variables. Convex functions read the
+ * deployment's own environment (`npx convex env set …` / the Convex
+ * dashboard). Setting these in Docker, compose or Dokploy's Environment tab
+ * configures the frontend container instead, which this code never sees — the
+ * mistake is invisible and the message is the only place it surfaces.
+ */
 export const CONFIG_ERROR =
-  "Google Drive is not configured yet — add GOOGLE_DRIVE_CLIENT_ID / GOOGLE_DRIVE_CLIENT_SECRET (README §Google setup)";
+  "Google Drive is not configured yet — set GOOGLE_DRIVE_CLIENT_ID and " +
+  "GOOGLE_DRIVE_CLIENT_SECRET on the CONVEX DEPLOYMENT (npx convex env set …, " +
+  "or the Convex dashboard). Docker/Dokploy environment variables do not reach " +
+  "Convex functions. Check with: npx convex env list — see README §Google setup";
 
 /** Thrown when a connection is revoked or its refresh token stops working. */
 export class DriveAuthError extends Error {
