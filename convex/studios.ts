@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { role } from "./schema";
 import {
@@ -47,6 +48,17 @@ export async function claimInvitesForUser(
       await ctx.db.delete(invite._id);
     } else {
       await ctx.db.patch(invite._id, { userId });
+      // They have joined now, so hand them the studio's Drive hubs — scaffold
+      // deliberately shares with accepted members only (spec §7). Scheduled and
+      // guarded: sign-in must never wait on Drive, or fail with it.
+      try {
+        await ctx.scheduler.runAfter(0, internal.drive.shareHubsWithMember, {
+          studioId: invite.studioId,
+          userId,
+        });
+      } catch (e) {
+        console.log(`claimInvitesForUser: could not schedule Drive share: ${String(e)}`);
+      }
     }
   }
 }
@@ -221,6 +233,25 @@ export const removeMember = mutation({
     await ctx.db.delete(args.membershipId);
     if (membership.userId !== undefined)
       await releaseAssignments(ctx, membership.studioId, membership.userId);
+    // App access is gone the moment the row is deleted, but Drive access is
+    // not: scaffoldHub gave this person writer rights on the hub of every
+    // production in the studio and nothing ever took them back (spec §7).
+    // Scheduled and guarded — removal must never slow down or fail on Drive.
+    const user =
+      membership.userId !== undefined
+        ? await ctx.db.get(membership.userId)
+        : null;
+    const email = user?.email ?? membership.invitedEmail;
+    if (email !== undefined) {
+      try {
+        await ctx.scheduler.runAfter(0, internal.drive.revokeMemberAccess, {
+          studioId: membership.studioId,
+          email,
+        });
+      } catch (e) {
+        console.log(`removeMember: could not schedule Drive revoke: ${String(e)}`);
+      }
+    }
   },
 });
 

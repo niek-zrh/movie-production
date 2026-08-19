@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { HardDrive, Loader2 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { openDrivePicker } from "@/lib/google-picker";
+import { copy } from "@/lib/copy";
 import { showMutationError } from "./error-toast";
 
 /**
@@ -30,13 +31,46 @@ export function AttachFromDrive({
 
   if (status === undefined) return null;
 
-  if (status.myConnection === null) {
+  /**
+   * drive.attachFromPicker needs BOTH tokens: the member's, to read the bytes
+   * of what they picked, and the hub owner's, to write the copy into the
+   * shot's Options folder. If either is missing the action throws — and the
+   * user would only find out after picking, so gate the control instead.
+   */
+  const blocked = !status.hub.connected
+    ? {
+        label: "Set up Drive hub to attach",
+        reason:
+          "This production has no Drive hub yet — an owner or producer can create it in Settings → Drive hub.",
+      }
+    : status.hub.revoked === true
+      ? {
+          label: "Drive hub needs reconnecting",
+          reason: `${copy.errors.driveExpired}${
+            status.hub.ownerEmail ? ` Hub owner: ${status.hub.ownerEmail}.` : ""
+          } Fix it in Settings → Drive hub.`,
+        }
+      : status.myConnection === null
+        ? {
+            label: "Connect Drive to attach files",
+            reason:
+              "Connect your own Google account in Settings → Drive hub to attach files from your Drive.",
+          }
+        : status.myConnection.revoked
+          ? {
+              label: "Reconnect Drive to attach files",
+              reason: `${copy.errors.driveExpired} Reconnect in Settings → Drive hub.`,
+            }
+          : null;
+
+  if (blocked !== null) {
     return (
       <Link
         href={`/p/${productionId}/settings`}
+        title={blocked.reason}
         className={buttonVariants({ variant: "outline", size: "sm" })}
       >
-        <HardDrive className="size-3.5" /> Connect Drive to attach files
+        <HardDrive className="size-3.5" /> {blocked.label}
       </Link>
     );
   }
@@ -73,6 +107,8 @@ export function AttachFromDrive({
         } catch (e) {
           showMutationError(e);
         } finally {
+          // Always clears — a Picker that never loaded must not leave the
+          // button dead for the rest of the session.
           setBusy(false);
         }
       }}

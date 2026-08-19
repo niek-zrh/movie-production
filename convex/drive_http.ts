@@ -20,16 +20,31 @@ export function registerDriveRoutes(http: HttpRouter) {
       const redirect = (path: string) =>
         new Response(null, {
           status: 302,
-          headers: { Location: `${siteUrl}${path}` },
+          headers: {
+            Location: `${siteUrl}${path}`,
+            // This URL carries a single-use authorization code: keep it out of
+            // caches and out of the next page's Referer.
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+          },
         });
 
       if (error || !code || !state) {
-        return redirect(
-          `/drive/connected?status=error&reason=${encodeURIComponent(error ?? "missing_code")}`,
-        );
+        // Google's error codes are lowercase tokens (access_denied,
+        // admin_policy_enforced…). Clamp before reflecting it: /drive/connected
+        // prints this string, and the query is attacker-reachable.
+        const reason = (error ?? "missing_code").toLowerCase();
+        const safeReason = /^[a-z0-9_-]{1,40}$/.test(reason)
+          ? reason
+          : "unknown_error";
+        return redirect(`/drive/connected?status=error&reason=${safeReason}`);
       }
 
       try {
+        // CSRF: completeConnection resolves `state` against driveConnectStates
+        // BEFORE the token exchange — an unknown, expired (>10 min) or already
+        // used state row means no exchange happens, and saveConnection deletes
+        // the row, so a replayed callback lands in the catch below.
         const result: { returnTo: string } = await ctx.runAction(
           internal.drive.completeConnection,
           { code, state },

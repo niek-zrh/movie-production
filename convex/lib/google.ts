@@ -5,6 +5,7 @@
  * drive.getPickerConfig, which hands the caller their OWN short-lived token).
  */
 
+import { ConvexError } from "convex/values";
 import type { ActionCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
@@ -48,13 +49,35 @@ export function googleEnv(): { clientId: string; clientSecret: string } | null {
 
 export function requireGoogleEnv(): { clientId: string; clientSecret: string } {
   const env = googleEnv();
-  if (!env) throw new Error(CONFIG_ERROR);
+  // ConvexError: a plain Error reaches the studio as "Server Error" and this
+  // message is the only place the env-plane mistake above is explained.
+  if (!env) throw new ConvexError(CONFIG_ERROR);
   return env;
 }
 
-/** OAuth redirect URI — must match the GCP console configuration exactly. */
+/**
+ * Same env plane as CONFIG_ERROR, but CONVEX_SITE_URL is populated by the
+ * backend itself (from CONVEX_SITE_ORIGIN on the self-hosted deployment), so
+ * the fix is a container setting, not `npx convex env set`.
+ */
+export const SITE_URL_ERROR =
+  "Google Drive is not configured yet — the Convex deployment has no " +
+  "CONVEX_SITE_URL, so the OAuth redirect URI cannot be built. Set " +
+  "CONVEX_SITE_ORIGIN on the CONVEX BACKEND (e.g. https://actions.kinolab.ai) " +
+  "and make sure <that origin>/google/drive/callback is a redirect URI on the " +
+  "OAuth client — see README §Google setup";
+
+/**
+ * OAuth redirect URI — must match the GCP console configuration exactly.
+ * Unset CONVEX_SITE_URL used to build "undefined/google/drive/callback" and
+ * fail inside Google's consent screen with an opaque redirect_uri_mismatch.
+ */
 export function redirectUri(): string {
-  return `${process.env.CONVEX_SITE_URL}/google/drive/callback`;
+  const siteUrl = process.env.CONVEX_SITE_URL;
+  if (!siteUrl) throw new ConvexError(SITE_URL_ERROR);
+  // Trailing slash would produce "…//google/drive/callback", which no longer
+  // matches the URI registered in the GCP console.
+  return `${siteUrl.replace(/\/+$/, "")}/google/drive/callback`;
 }
 
 type TokenResponse = {
@@ -108,6 +131,54 @@ export async function exchangeCode(code: string): Promise<{
 }
 
 /**
+ * Access token → the connection it came from. Revocation only becomes visible
+ * when Drive answers 401, and the low-level helpers below are handed a bare
+ * token (drive.ts passes the string around), so this is the only route back to
+ * the row that must be marked revoked. Deliberately small and best-effort: a
+ * miss costs us only the revoked flag — DriveAuthError still reaches the UI and
+ * the next refresh sees invalid_grant.
+ */
+const tokenOwners = new Map<
+  string,
+  { ctx: ActionCtx; connectionId: Id<"googleConnections"> }
+>();
+const TOKEN_OWNERS_MAX = 16;
+
+function rememberTokenOwner(
+  ctx: ActionCtx,
+  connectionId: Id<"googleConnections">,
+  token: string,
+): void {
+  tokenOwners.delete(token); // re-insert so Map order stays least-recent first
+  tokenOwners.set(token, { ctx, connectionId });
+  for (const key of tokenOwners.keys()) {
+    if (tokenOwners.size <= TOKEN_OWNERS_MAX) break;
+    tokenOwners.delete(key);
+  }
+}
+
+/**
+ * A Drive call reported that this token is no longer valid — the user revoked
+ * access (or changed their password) in their Google account. Mark the
+ * connection revoked exactly like an invalid_grant refresh does, so the UI
+ * shows its reconnect state instead of failing every call for up to an hour
+ * until the cached access token expires.
+ */
+async function markTokenRevoked(token: string): Promise<void> {
+  const owner = tokenOwners.get(token);
+  if (owner === undefined) return;
+  tokenOwners.delete(token);
+  try {
+    await owner.ctx.runMutation(internal.drive.markRevoked, {
+      connectionId: owner.connectionId,
+    });
+  } catch (e) {
+    // Best-effort: the action that fetched this token may already have ended.
+    console.error("Drive: could not mark connection revoked", String(e));
+  }
+}
+
+/**
  * Return a valid access token for a connection, refreshing when it expires in
  * under 60s. Persists refreshed tokens; `invalid_grant` marks the connection
  * revoked and throws DriveAuthError ("Drive connection expired — reconnect").
@@ -119,9 +190,12 @@ export async function getFreshToken(
   const conn = await ctx.runQuery(internal.drive.connectionForToken, {
     connectionId,
   });
-  if (!conn) throw new Error("Drive connection not found");
+  if (!conn) throw new ConvexError("Drive connection not found");
   if (conn.revoked) throw new DriveAuthError();
-  if (conn.expiresAt >= Date.now() + 60_000) return conn.accessToken;
+  if (conn.expiresAt >= Date.now() + 60_000) {
+    rememberTokenOwner(ctx, connectionId, conn.accessToken);
+    return conn.accessToken;
+  }
 
   if (conn.refreshToken === null) {
     await ctx.runMutation(internal.drive.markRevoked, { connectionId });
@@ -139,8 +213,13 @@ export async function getFreshToken(
       await ctx.runMutation(internal.drive.markRevoked, { connectionId });
       throw new DriveAuthError();
     }
-    throw new Error(`Google token refresh failed: ${data.error ?? "unknown"}`);
+    console.error("Google token refresh failed", data.error ?? "unknown");
+    throw new ConvexError(
+      "Google would not refresh this Drive connection — try again, or " +
+        "reconnect Drive in Settings.",
+    );
   }
+  rememberTokenOwner(ctx, connectionId, data.access_token);
   await ctx.runMutation(internal.drive.persistToken, {
     connectionId,
     accessToken: data.access_token,
@@ -166,6 +245,117 @@ export type DriveFile = {
   trashed?: boolean;
   thumbnailLink?: string;
 };
+
+// ---------------------------------------------------------------------------
+// Error mapping — one Google status covers several very different problems
+// ---------------------------------------------------------------------------
+
+type GoogleApiError = {
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+    errors?: { reason?: string; message?: string; domain?: string }[];
+  };
+};
+
+/** `error.errors[].reason` — the only reliable discriminator Google gives us. */
+function errorReasons(body: string): string[] {
+  try {
+    const parsed = JSON.parse(body) as GoogleApiError;
+    return (parsed.error?.errors ?? [])
+      .map((e) => e.reason ?? "")
+      .filter((r) => r !== "");
+  } catch {
+    return []; // HTML error page, empty body, proxy noise
+  }
+}
+
+const AUTH_REASONS = new Set([
+  "authError",
+  "invalid_credentials",
+  "invalid_token",
+  "unauthorized",
+]);
+
+/**
+ * The token itself was rejected. 401 is unambiguous; 403 only counts when
+ * Google says so, because plain 403 is a permission/quota answer about the
+ * FILE, not the connection.
+ */
+function isAuthFailure(status: number, reasons: string[], body: string): boolean {
+  if (status === 401) return true;
+  if (status !== 403) return false;
+  if (reasons.some((r) => AUTH_REASONS.has(r))) return true;
+  return /invalid[ _](authentication )?credentials/i.test(body);
+}
+
+/**
+ * Turn a Drive error response into a sentence the studio can act on (spec §7).
+ * The raw body goes to the logs and never into the user-facing message; a bare
+ * Error here would surface in production as "Server Error", which tells the
+ * person trying to work nothing at all.
+ *
+ * `token` lets an auth failure mark the connection revoked — see
+ * markTokenRevoked. Returns the error so callers `throw await driveFailure(…)`.
+ */
+async function driveFailure(
+  context: string,
+  status: number,
+  body: string,
+  token?: string,
+): Promise<Error> {
+  console.error(`Drive API ${status} ${context}: ${body.slice(0, 300)}`);
+  const reasons = errorReasons(body);
+  if (isAuthFailure(status, reasons, body)) {
+    if (token !== undefined) await markTokenRevoked(token);
+    return new DriveAuthError();
+  }
+  const has = (reason: string): boolean => reasons.includes(reason);
+  if (has("storageQuotaExceeded")) {
+    return new ConvexError(
+      "The connected Google Drive account is out of storage — free up space " +
+        "in that Drive (or upgrade its plan) and try again.",
+    );
+  }
+  if (
+    status === 429 ||
+    has("rateLimitExceeded") ||
+    has("userRateLimitExceeded") ||
+    has("sharingRateLimitExceeded") ||
+    has("dailyLimitExceeded")
+  ) {
+    return new ConvexError(
+      "Google is rate-limiting this Drive account — wait a moment and try again.",
+    );
+  }
+  if (status === 403) {
+    return new ConvexError(
+      "Google Drive refused access to that file or folder — the connected " +
+        "Google account needs edit access to it.",
+    );
+  }
+  if (status === 404) {
+    return new ConvexError(
+      "That file no longer exists in Drive — it may have been deleted, or " +
+        "moved out of the hub folder.",
+    );
+  }
+  if (has("invalidSharingRequest")) {
+    return new ConvexError(
+      "Google would not share with that address — it has to be a Google account.",
+    );
+  }
+  if (status >= 500) {
+    return new ConvexError(
+      "Google Drive is temporarily unavailable — try again in a moment.",
+    );
+  }
+  return new ConvexError(
+    `Google Drive rejected the request (HTTP ${status}) — the details are in ` +
+      "the server logs.",
+  );
+}
 
 /** Escape a value for use inside single quotes in a Drive `q` expression. */
 export function qEscape(value: string): string {
@@ -202,8 +392,11 @@ export async function driveRequest<T>(
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(
-      `Drive API ${res.status} ${init?.method ?? "GET"} ${url.pathname}: ${body.slice(0, 300)}`,
+    throw await driveFailure(
+      `${init?.method ?? "GET"} ${url.pathname}`,
+      res.status,
+      body,
+      token,
     );
   }
   return (await res.json()) as T;
@@ -308,7 +501,9 @@ export async function multipartUpload(
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Drive upload failed (${res.status}): ${text.slice(0, 300)}`);
+    // Same mapping as driveRequest — an upload is where storageQuotaExceeded
+    // actually shows up, and "Server Error" would hide it.
+    throw await driveFailure("POST /upload/files", res.status, text, token);
   }
   return (await res.json()) as DriveFile;
 }
@@ -340,7 +535,8 @@ export async function getFileBytes(
     { headers: { Authorization: `Bearer ${token}` } },
   );
   if (!res.ok) {
-    throw new Error(`Could not read Drive file ${fileId} (${res.status})`);
+    const body = await res.text().catch(() => "");
+    throw await driveFailure(`GET /files/${fileId} (media)`, res.status, body, token);
   }
   return await res.arrayBuffer();
 }

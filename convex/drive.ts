@@ -8,7 +8,7 @@ import {
   mutation,
   query,
 } from "./_generated/server";
-import type { ActionCtx, QueryCtx } from "./_generated/server";
+import type { ActionCtx, MutationCtx, QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -17,6 +17,7 @@ import {
   requireUserId,
 } from "./lib/permissions";
 import { actorName, logActivity } from "./lib/activity";
+import { notify } from "./lib/notify";
 import {
   canonicalApprovedName,
   extensionFor,
@@ -30,6 +31,7 @@ import {
   createFolder,
   DRIVE_SCOPE,
   DriveAuthError,
+  driveRequest,
   exchangeCode,
   FOLDER_MIME,
   getFileBytes,
@@ -122,6 +124,138 @@ function randomStateToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+const DRIVE_API = "https://www.googleapis.com/drive/v3";
+
+/**
+ * Ceiling for a Picker attach. The action holds the downloaded bytes AND the
+ * multipart body it builds from them, so an unbounded pick (a studio picks
+ * camera masters) runs the action out of memory and the whole attach dies with
+ * nothing useful on screen. Named in the error so the number is never a
+ * mystery (spec §7.3).
+ */
+const MAX_PICKER_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_PICKER_FILE_LABEL = "50 MB";
+
+/**
+ * Its own class so attachFromPicker can let the limit through while every
+ * other per-file failure stays a quiet "skipped" (a Drive hiccup on one file
+ * must never fail the attach).
+ */
+class PickTooLargeError extends ConvexError<string> {}
+
+/**
+ * Last-resort thumbnail size. Drive's own thumbnailLink is the thumbnail we
+ * want; storing the original instead only makes sense for something already
+ * small enough to serve into a 36px row.
+ */
+const MAX_INLINE_THUMB_BYTES = 2 * 1024 * 1024;
+
+function megabytes(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+/**
+ * Cache Drive's own thumbnail (thumbnailLink, part of FILE_FIELDS) into Convex
+ * storage. Best-effort by design: any failure returns undefined and the next
+ * sync pass retries it, because a missing thumbnail must never fail a write.
+ */
+async function cacheDriveThumb(
+  ctx: ActionCtx,
+  token: string,
+  thumbnailLink: string | undefined,
+): Promise<Id<"_storage"> | undefined> {
+  if (thumbnailLink === undefined) return undefined;
+  try {
+    const res = await fetch(thumbnailLink, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return undefined;
+    return await ctx.storage.store(await res.blob());
+  } catch {
+    return undefined; // thumbnails are best-effort
+  }
+}
+
+type DrivePermission = {
+  id: string;
+  type?: string;
+  role?: string;
+  emailAddress?: string;
+};
+
+/** permissions.list on one file — used to find a member's grant by email. */
+async function permissionsList(
+  token: string,
+  fileId: string,
+): Promise<DrivePermission[]> {
+  const data = await driveRequest<{ permissions?: DrivePermission[] }>(
+    token,
+    `/files/${encodeURIComponent(fileId)}/permissions`,
+    undefined,
+    { fields: "permissions(id,type,role,emailAddress)" },
+  );
+  return data.permissions ?? [];
+}
+
+/**
+ * permissions.delete answers 204 with an empty body, which driveRequest cannot
+ * carry (it parses JSON), so this one call goes out as a plain fetch. A 404 is
+ * success: the grant is already gone.
+ */
+async function permissionDelete(
+  token: string,
+  fileId: string,
+  permissionId: string,
+): Promise<void> {
+  const url = `${DRIVE_API}/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(permissionId)}?supportsAllDrives=true`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok && res.status !== 404) {
+    const body = await res.text().catch(() => "");
+    throw new Error(
+      `Drive permissions.delete failed (${res.status}): ${body.slice(0, 200)}`,
+    );
+  }
+}
+
+/**
+ * The caller's own Drive connection: newest first, preferring one that still
+ * works. Reconnecting with a DIFFERENT Google account adds a row instead of
+ * overwriting one a hub points at (see saveConnection), so a user can hold
+ * more than one — "mine" is the latest account they consented with, while
+ * every hub keeps the account that created it.
+ */
+async function myConnectionRow(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+): Promise<Doc<"googleConnections"> | null> {
+  const rows = await ctx.db
+    .query("googleConnections")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .order("desc")
+    .collect();
+  return rows.find((r) => r.revoked !== true) ?? rows[0] ?? null;
+}
+
+/**
+ * Productions whose hub is bound to one of these connections. Full scan, like
+ * hubProductions — a pilot studio has a handful of productions and there is no
+ * index on hub.connectionId.
+ */
+async function productionsForConnections(
+  ctx: MutationCtx,
+  connectionIds: Id<"googleConnections">[],
+): Promise<Doc<"productions">[]> {
+  if (connectionIds.length === 0) return [];
+  const ids = new Set<string>(connectionIds);
+  const productions = await ctx.db.query("productions").collect();
+  return productions.filter(
+    (p) => p.hub !== undefined && ids.has(p.hub.connectionId),
+  );
+}
+
 // ===========================================================================
 // Public surface
 // ===========================================================================
@@ -162,10 +296,7 @@ export const connectionStatus = query({
         };
       }
     }
-    const mine = await ctx.db
-      .query("googleConnections")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .first();
+    const mine = await myConnectionRow(ctx, userId);
     return {
       myConnection:
         mine === null
@@ -283,9 +414,15 @@ export const scaffoldHub = action({
       },
     });
 
-    // Share the root with every member that has an email — best-effort each.
+    // Share the root with every member that has joined — best-effort each.
+    // (Pending invites are shared when they accept, see scaffoldContext.)
     for (const member of info.members) {
-      if (member.email === info.connectionEmail) continue;
+      if (
+        info.connectionEmail !== null &&
+        sameEmail(member.email, info.connectionEmail)
+      ) {
+        continue; // the hub owner already owns the folder
+      }
       try {
         await permissionCreate(token, root.id, {
           role: member.role === "viewer" ? "commenter" : "writer",
@@ -349,8 +486,16 @@ export const uploadToShot = action({
       parents: [optionsId],
       bytes: args.bytes,
     });
-    let thumbStorageId: Id<"_storage"> | undefined;
-    if (args.mimeType.startsWith("image/")) {
+    // Drive's generated thumbnail first — storing the original as the "thumb"
+    // serves a full-resolution frame into a 36px row (§7). Only a file already
+    // small enough to be a thumbnail stands in when Drive has none yet; bigger
+    // ones wait for the sync pass that caches thumbnailLink.
+    let thumbStorageId = await cacheDriveThumb(ctx, token, file.thumbnailLink);
+    if (
+      thumbStorageId === undefined &&
+      args.mimeType.startsWith("image/") &&
+      args.bytes.byteLength <= MAX_INLINE_THUMB_BYTES
+    ) {
       thumbStorageId = await ctx.storage.store(
         new Blob([args.bytes], { type: args.mimeType }),
       );
@@ -416,24 +561,41 @@ export const attachFromPicker = action({
       info.shot,
     );
 
+    // Ask Drive for the sizes before downloading anything: this action holds
+    // each file whole, and meeting a camera master halfway through the loop
+    // would OOM it with the attach already half done (spec §7.3).
+    const tooLarge: string[] = [];
+    for (const picked of args.files) {
+      const size = await pickedFileSize(myToken, picked.id);
+      if (size !== null && size > MAX_PICKER_FILE_BYTES) {
+        tooLarge.push(`${picked.name} (${megabytes(size)})`);
+      }
+    }
+    if (tooLarge.length > 0) {
+      throw new ConvexError(
+        `Kinolab copies files up to ${MAX_PICKER_FILE_LABEL} from Drive — too large: ${tooLarge.join(", ")}. Share those as a link instead.`,
+      );
+    }
+
     let attached = 0;
     const skipped: string[] = [];
     for (const picked of args.files) {
       try {
-        const bytes = await getFileBytes(myToken, picked.id);
         const mimeType = picked.mimeType ?? "application/octet-stream";
-        const file = await multipartUpload(hubToken, {
-          name: picked.name,
-          mimeType,
-          parents: [optionsId],
-          bytes,
-        });
-        let thumbStorageId: Id<"_storage"> | undefined;
-        if (mimeType.startsWith("image/")) {
-          thumbStorageId = await ctx.storage.store(
-            new Blob([bytes], { type: mimeType }),
-          );
-        }
+        const { file, sizeBytes } = await copyPickedFileToHub(
+          myToken,
+          hubToken,
+          picked,
+          { mimeType, parentId: optionsId },
+        );
+        // Drive's own thumbnail, never the full-resolution original: this ends
+        // up in a 36px list row (§7). Drive may not have generated one yet —
+        // then the asset goes in without, and the next sync pass fills it.
+        const thumbStorageId = await cacheDriveThumb(
+          ctx,
+          hubToken,
+          file.thumbnailLink,
+        );
         if (args.asVersions) {
           await ctx.runMutation(createWithAssetRef, {
             shotId: args.shotId,
@@ -445,7 +607,7 @@ export const attachFromPicker = action({
               name: picked.name,
               mimeType,
               sizeBytes:
-                file.size !== undefined ? Number(file.size) : bytes.byteLength,
+                file.size !== undefined ? Number(file.size) : sizeBytes,
               ...(file.md5Checksum !== undefined
                 ? { md5: file.md5Checksum }
                 : {}),
@@ -466,8 +628,7 @@ export const attachFromPicker = action({
             driveParentId: optionsId,
             name: picked.name,
             mimeType,
-            sizeBytes:
-              file.size !== undefined ? Number(file.size) : bytes.byteLength,
+            sizeBytes: file.size !== undefined ? Number(file.size) : sizeBytes,
             ...(file.md5Checksum !== undefined
               ? { md5: file.md5Checksum }
               : {}),
@@ -483,6 +644,8 @@ export const attachFromPicker = action({
         if (e instanceof DriveAuthError) {
           throw new ConvexError("Drive connection expired — reconnect");
         }
+        // The size limit is the user's to know; anything else stays a skip.
+        if (e instanceof PickTooLargeError) throw e;
         console.log(
           `attachFromPicker: skipped ${picked.name}: ${String(e)}`,
         );
@@ -642,14 +805,19 @@ export const syncNow = action({
       }
       throw e;
     }
-    await ctx.runMutation(internal.drive.logSynced, {
-      productionId: args.productionId,
-      actorId: sctx.userId,
-      newFiles: counts.newFiles,
-      updated: counts.updated,
-      missing: counts.missing,
-      viaCron: false,
-    });
+    // Only a sync that actually changed something gets a row: "Sync now" is
+    // one click any member can repeat, and an activity feed full of identical
+    // "synced — 0 new file(s)" lines buries the production's real history.
+    if (hasChanges(counts)) {
+      await ctx.runMutation(internal.drive.logSynced, {
+        productionId: args.productionId,
+        actorId: sctx.userId,
+        newFiles: counts.newFiles,
+        updated: counts.updated,
+        missing: counts.missing,
+        viaCron: false,
+      });
+    }
     return counts;
   },
 });
@@ -671,7 +839,7 @@ export const cronSync = internalAction({
           hubUserId: sctx.hubUserId,
           shotFolderIds: sctx.shotFolderIds,
         });
-        if (counts.newFiles + counts.updated + counts.missing > 0) {
+        if (hasChanges(counts)) {
           await ctx.runMutation(internal.drive.logSynced, {
             productionId,
             actorId: sctx.hubUserId,
@@ -690,9 +858,147 @@ export const cronSync = internalAction({
   },
 });
 
+/**
+ * Share this studio's hubs with a member who just joined (spec §7).
+ * scaffoldHub only shares with people who have accepted, so this is the other
+ * half of that rule — scheduled from studios.claimInvitesForUser. Best-effort
+ * throughout: sign-in must never depend on Drive.
+ */
+export const shareHubsWithMember = internalAction({
+  args: { studioId: v.id("studios"), userId: v.id("users") },
+  handler: async (ctx, args): Promise<null> => {
+    const targets = await ctx.runQuery(internal.drive.studioHubTargets, {
+      studioId: args.studioId,
+      userId: args.userId,
+    });
+    if (targets.email === null || targets.role === null) return null;
+    for (const hub of targets.hubs) {
+      if (hub.ownerEmail !== null && sameEmail(hub.ownerEmail, targets.email)) {
+        continue; // the hub owner already owns the folder
+      }
+      try {
+        const token = await getFreshToken(ctx, hub.connectionId);
+        await permissionCreate(token, hub.rootFolderId, {
+          role: targets.role === "viewer" ? "commenter" : "writer",
+          emailAddress: targets.email,
+        });
+      } catch (e) {
+        console.log(
+          `shareHubsWithMember: could not share ${hub.productionName} with ${targets.email}: ${String(e)}`,
+        );
+      }
+    }
+    return null;
+  },
+});
+
+/**
+ * Drop a removed member's Drive permission on every hub of this studio.
+ * Revoking app access leaves Drive untouched otherwise, so an ex-member keeps
+ * writer rights on confidential pre-release material forever (spec §7).
+ * Scheduled from studios.removeMember and best-effort per hub: a Drive failure
+ * is logged, never thrown, so removal itself is already done and final.
+ */
+export const revokeMemberAccess = internalAction({
+  args: { studioId: v.id("studios"), email: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    const { hubs } = await ctx.runQuery(internal.drive.studioHubTargets, {
+      studioId: args.studioId,
+    });
+    for (const hub of hubs) {
+      // Removing the hub owner's own grant would orphan the hub; Drive would
+      // refuse anyway (they own the folder).
+      if (hub.ownerEmail !== null && sameEmail(hub.ownerEmail, args.email)) {
+        console.log(
+          `revokeMemberAccess: ${args.email} owns the hub for ${hub.productionName} — leaving Drive access in place`,
+        );
+        continue;
+      }
+      try {
+        const token = await getFreshToken(ctx, hub.connectionId);
+        const permissions = await permissionsList(token, hub.rootFolderId);
+        for (const permission of permissions) {
+          if (permission.type !== "user" || permission.role === "owner") continue;
+          if (
+            permission.emailAddress === undefined ||
+            !sameEmail(permission.emailAddress, args.email)
+          ) {
+            continue;
+          }
+          await permissionDelete(token, hub.rootFolderId, permission.id);
+          console.log(
+            `revokeMemberAccess: removed ${args.email} from ${hub.productionName}`,
+          );
+        }
+      } catch (e) {
+        console.log(
+          `revokeMemberAccess: could not revoke ${args.email} on ${hub.productionName}: ${String(e)}`,
+        );
+      }
+    }
+    return null;
+  },
+});
+
 // ===========================================================================
 // Shared action-side helpers
 // ===========================================================================
+
+/** Google addresses are case-insensitive; our rows are not normalized. */
+function sameEmail(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * files.get for the size alone. null when Drive will not say (a Google Doc has
+ * no size, an unreadable file is reported as skipped by the copy loop anyway).
+ */
+async function pickedFileSize(
+  token: string,
+  fileId: string,
+): Promise<number | null> {
+  try {
+    const meta = await driveRequest<{ size?: string }>(
+      token,
+      `/files/${encodeURIComponent(fileId)}`,
+      undefined,
+      { fields: "id,size" },
+    );
+    return meta.size !== undefined ? Number(meta.size) : null;
+  } catch (e) {
+    console.log(
+      `attachFromPicker: could not read Drive metadata for ${fileId}: ${String(e)}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Read a picked file with the member's token and write the copy into the hub
+ * with the hub owner's. The bytes stay scoped to this helper, so one file at a
+ * time is held and it is released as soon as the upload returns (spec §7.3).
+ */
+async function copyPickedFileToHub(
+  myToken: string,
+  hubToken: string,
+  picked: { id: string; name: string },
+  args: { mimeType: string; parentId: string },
+): Promise<{ file: DriveFile; sizeBytes: number }> {
+  const bytes = await getFileBytes(myToken, picked.id);
+  // Second gate: Drive reports no size for some files, so check what we got.
+  if (bytes.byteLength > MAX_PICKER_FILE_BYTES) {
+    throw new PickTooLargeError(
+      `${picked.name} is ${megabytes(bytes.byteLength)} — Kinolab copies files up to ${MAX_PICKER_FILE_LABEL} from Drive. Share it as a link instead.`,
+    );
+  }
+  const file = await multipartUpload(hubToken, {
+    name: picked.name,
+    mimeType: args.mimeType,
+    parents: [args.parentId],
+    bytes,
+  });
+  return { file, sizeBytes: bytes.byteLength };
+}
 
 /**
  * Lazily ensure "04 Production/Shots/{code}/" with "Options" and "Approved"
@@ -710,34 +1016,96 @@ async function ensureShotFolders(
   }
   let shotFolderId = shot.driveFolderId;
   if (shotFolderId === null) {
-    const existing = await listFiles(
-      token,
-      `'${qEscape(shotsRoot)}' in parents and name = '${qEscape(shot.code)}' and mimeType = '${FOLDER_MIME}' and trashed = false`,
-    );
-    const candidateId =
-      existing[0]?.id ?? (await createFolder(token, shot.code, shotsRoot)).id;
+    const candidateId = await ensureFolder(token, shotsRoot, shot.code);
     // Compare-and-set: a concurrent upload may have won the race — converge
     // on whichever folder id the mutation kept.
-    shotFolderId = await ctx.runMutation(internal.drive.setShotDriveFolder, {
+    const kept = await ctx.runMutation(internal.drive.setShotDriveFolder, {
       shotId: shot._id,
       driveFolderId: candidateId,
     });
+    if (kept !== candidateId) {
+      console.log(
+        `ensureShotFolders: ${shot.code} raced — keeping ${kept}, Drive folder ${candidateId} is unused`,
+      );
+    }
+    shotFolderId = kept;
   }
-  const children = await listFiles(
+  const children = await listFolderChildren(token, shotFolderId);
+  const optionsId = await ensureFolder(token, shotFolderId, "Options", children);
+  const approvedId = await ensureFolder(
     token,
-    `'${qEscape(shotFolderId)}' in parents and mimeType = '${FOLDER_MIME}' and trashed = false`,
+    shotFolderId,
+    "Approved",
+    children,
   );
-  const childId = (name: string): string | undefined =>
-    children.find((c) => c.name === name)?.id;
-  const optionsId =
-    childId("Options") ?? (await createFolder(token, "Options", shotFolderId)).id;
-  const approvedId =
-    childId("Approved") ??
-    (await createFolder(token, "Approved", shotFolderId)).id;
   return { shotFolderId, optionsId, approvedId };
 }
 
+/** Sub-folders of one folder — the lookup behind ensureFolder. */
+async function listFolderChildren(
+  token: string,
+  parentId: string,
+): Promise<DriveFile[]> {
+  return await listFiles(
+    token,
+    `'${qEscape(parentId)}' in parents and mimeType = '${FOLDER_MIME}' and trashed = false`,
+  );
+}
+
+/**
+ * Lowest id wins, so two actions that both see the same duplicates choose the
+ * same folder instead of each filing into its own.
+ */
+function pickFolder(files: DriveFile[], name: string): string | undefined {
+  return files
+    .filter((f) => f.name === name && f.trashed !== true)
+    .map((f) => f.id)
+    .sort()[0];
+}
+
+/**
+ * Idempotent folder creation per (parent, name): concurrent uploads to the
+ * same shot used to create the shot folder and its Options/ + Approved/
+ * children twice over, leaving duplicates and orphans in the studio's Drive.
+ * After creating, we re-list and converge on the lowest id, so whoever lost
+ * the race still files into the winner's folder. Nothing is ever deleted —
+ * a stray empty folder is cheap, a trashed one full of dailies is not.
+ */
+async function ensureFolder(
+  token: string,
+  parentId: string,
+  name: string,
+  known?: DriveFile[],
+): Promise<string> {
+  // Named lookup, not the whole parent: Shots/ holds one folder per shot.
+  const byName = async (): Promise<DriveFile[]> =>
+    await listFiles(
+      token,
+      `'${qEscape(parentId)}' in parents and name = '${qEscape(name)}' and mimeType = '${FOLDER_MIME}' and trashed = false`,
+    );
+  const found = pickFolder(known ?? (await byName()), name);
+  if (found !== undefined) return found;
+  const created = await createFolder(token, name, parentId);
+  const winner = pickFolder(await byName(), name) ?? created.id;
+  if (winner !== created.id) {
+    console.log(
+      `ensureFolder: "${name}" was created twice under ${parentId} — using ${winner}`,
+    );
+  }
+  return winner;
+}
+
 type SyncCounts = { newFiles: number; updated: number; missing: number };
+
+/**
+ * Did this pass change anything? `missing` is a standing count — a trashed file
+ * is counted again on every pass — so only rows we inserted or patched make a
+ * sync worth an activity row (a file that goes missing patches its row, so it
+ * still shows up as `updated`).
+ */
+function hasChanges(counts: SyncCounts): boolean {
+  return counts.newFiles + counts.updated > 0;
+}
 
 /** Shared sync core for syncNow and cronSync. Throws DriveAuthError. */
 async function runSync(
@@ -767,6 +1135,16 @@ async function runSync(
     try {
       files = await listFiles(token, `'${qEscape(folderId)}' in parents`);
     } catch (e) {
+      // The hub root is the one folder this token must be able to open: it
+      // created it. If it cannot, the hub is gone or belongs to another Google
+      // account, and counting zeros would report "up to date" over a hub we
+      // cannot see at all (spec §7).
+      if (folderId === args.hub.rootFolderId) {
+        console.log(`drive sync: hub root ${folderId} unreadable: ${String(e)}`);
+        throw new ConvexError(
+          "Kinolab can't open this production's hub folder in Drive — reconnect the Google account that created the hub (Settings → Drive hub)",
+        );
+      }
       console.log(`drive sync: could not list folder ${folderId}: ${String(e)}`);
       continue;
     }
@@ -801,23 +1179,17 @@ async function runSync(
     // Cache Drive thumbnails; any non-OK response skips quietly.
     const byId = new Map(files.map((f) => [f.id, f] as const));
     for (const thumb of result.thumbsNeeded) {
-      const link = byId.get(thumb.driveFileId)?.thumbnailLink;
-      if (link === undefined) continue;
-      try {
-        const res = await fetch(link, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) continue;
-        const blob = await res.blob();
-        const thumbStorageId = await ctx.storage.store(blob);
-        await ctx.runMutation(internal.drive.setAssetThumb, {
-          assetId: thumb.assetId,
-          thumbStorageId,
-          ...(thumb.md5 !== null ? { thumbForMd5: thumb.md5 } : {}),
-        });
-      } catch {
-        // skip quietly — thumbnails are best-effort
-      }
+      const thumbStorageId = await cacheDriveThumb(
+        ctx,
+        token,
+        byId.get(thumb.driveFileId)?.thumbnailLink,
+      );
+      if (thumbStorageId === undefined) continue;
+      await ctx.runMutation(internal.drive.setAssetThumb, {
+        assetId: thumb.assetId,
+        thumbStorageId,
+        ...(thumb.md5 !== null ? { thumbForMd5: thumb.md5 } : {}),
+      });
     }
   }
   return counts;
@@ -881,10 +1253,7 @@ export const myConnection = internalQuery({
     revoked: boolean;
   } | null> => {
     const userId = await requireUserId(ctx);
-    const conn = await ctx.db
-      .query("googleConnections")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .first();
+    const conn = await myConnectionRow(ctx, userId);
     if (conn === null) return null;
     return {
       connectionId: conn._id,
@@ -912,22 +1281,21 @@ export const scaffoldContext = internalQuery({
       args.productionId,
       "production.manage",
     );
-    const mine = await ctx.db
-      .query("googleConnections")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .first();
+    const mine = await myConnectionRow(ctx, userId);
     const memberships = await ctx.db
       .query("memberships")
       .withIndex("by_studio", (q) => q.eq("studioId", production.studioId))
       .collect();
     const members: { email: string; role: string }[] = [];
     for (const membership of memberships) {
-      const user =
-        membership.userId !== undefined
-          ? await ctx.db.get(membership.userId)
-          : null;
-      const email = user?.email ?? membership.invitedEmail ?? null;
-      if (email !== null) members.push({ email, role: membership.role });
+      // Only people who actually joined. A pending invite is just an address:
+      // handing it writer access to confidential pre-release material — access
+      // nothing later revokes — must not happen before it is accepted. The
+      // share happens on join instead (studios.claimInvitesForUser →
+      // drive.shareHubsWithMember).
+      if (membership.userId === undefined) continue;
+      const user = await ctx.db.get(membership.userId);
+      if (user?.email) members.push({ email: user.email, role: membership.role });
     }
     return {
       userId,
@@ -959,10 +1327,7 @@ export const uploadContext = internalQuery({
       shot.productionId,
       "version.create",
     );
-    const mine = await ctx.db
-      .query("googleConnections")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .first();
+    const mine = await myConnectionRow(ctx, userId);
     return {
       userId,
       productionId: production._id,
@@ -1081,6 +1446,65 @@ export const syncContext = internalQuery({
   },
 });
 
+type StudioHub = {
+  productionId: Id<"productions">;
+  productionName: string;
+  connectionId: Id<"googleConnections">;
+  rootFolderId: string;
+  ownerEmail: string | null;
+};
+
+/** Every connected hub of one studio, with the email whose token owns it. */
+async function studioHubs(
+  ctx: QueryCtx,
+  studioId: Id<"studios">,
+): Promise<StudioHub[]> {
+  const productions = await ctx.db
+    .query("productions")
+    .withIndex("by_studio", (q) => q.eq("studioId", studioId))
+    .collect();
+  const hubs: StudioHub[] = [];
+  for (const production of productions) {
+    if (production.hub === undefined) continue;
+    const conn = await ctx.db.get(production.hub.connectionId);
+    hubs.push({
+      productionId: production._id,
+      productionName: production.name,
+      connectionId: production.hub.connectionId,
+      rootFolderId: production.hub.rootFolderId,
+      ownerEmail: conn?.email ?? null,
+    });
+  }
+  return hubs;
+}
+
+export const studioHubTargets = internalQuery({
+  args: { studioId: v.id("studios"), userId: v.optional(v.id("users")) },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    hubs: StudioHub[];
+    email: string | null;
+    role: string | null;
+  }> => {
+    const hubs = await studioHubs(ctx, args.studioId);
+    if (args.userId === undefined) return { hubs, email: null, role: null };
+    const user = await ctx.db.get(args.userId);
+    const membership = await ctx.db
+      .query("memberships")
+      .withIndex("by_studio_user", (q) =>
+        q.eq("studioId", args.studioId).eq("userId", args.userId),
+      )
+      .unique();
+    return {
+      hubs,
+      email: user?.email ?? null,
+      role: membership?.role ?? null,
+    };
+  },
+});
+
 export const hubProductions = internalQuery({
   args: {},
   handler: async (ctx): Promise<{ productionId: Id<"productions"> }[]> => {
@@ -1138,31 +1562,96 @@ export const saveConnection = internalMutation({
   handler: async (ctx, args): Promise<Id<"googleConnections">> => {
     const state = await ctx.db.get(args.stateId);
     if (state !== null) await ctx.db.delete(args.stateId);
-    const existing = await ctx.db
+    const rows = await ctx.db
       .query("googleConnections")
       .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .first();
-    if (existing !== null) {
-      await ctx.db.patch(existing._id, {
-        googleUserId: args.googleUserId,
-        email: args.email,
-        accessToken: args.accessToken,
-        refreshToken: args.refreshToken ?? existing.refreshToken,
-        expiresAt: args.expiresAt,
-        scopes: args.scopes,
-        revoked: undefined, // reconnecting clears a revoked flag
-      });
-      return existing._id;
-    }
-    return await ctx.db.insert("googleConnections", {
-      userId: args.userId,
+      .collect(); // oldest first
+
+    const fresh = {
       googleUserId: args.googleUserId,
       email: args.email,
       accessToken: args.accessToken,
-      refreshToken: args.refreshToken,
       expiresAt: args.expiresAt,
       scopes: args.scopes,
-    });
+      revoked: undefined, // reconnecting clears a revoked flag
+    };
+
+    // The common case: the SAME Google account reconnects (expired refresh
+    // token). Patch its row in place — hubs bound to it start working again.
+    const same = rows.find((r) => r.googleUserId === args.googleUserId);
+    if (same !== undefined) {
+      await ctx.db.patch(same._id, {
+        ...fresh,
+        refreshToken: args.refreshToken ?? same.refreshToken,
+      });
+      return same._id;
+    }
+
+    /**
+     * A DIFFERENT Google account. Under `drive.file` the new token can see
+     * nothing the old account created, so overwriting a row that a
+     * production.hub points at would leave every hub write and every sync
+     * talking to a Drive where the hub does not exist — and sync would keep
+     * reporting "up to date" forever (spec §7). Rows a hub depends on are
+     * therefore never repointed: the hub keeps naming the account that built
+     * it, the UI keeps showing it as the hub owner, and its writes fail loudly
+     * ("Drive connection expired — reconnect") instead of quietly.
+     */
+    const hubbed = await productionsForConnections(
+      ctx,
+      rows.map((r) => r._id),
+    );
+    const hubbedIds = new Set<string>(
+      hubbed.flatMap((p) => (p.hub !== undefined ? [p.hub.connectionId] : [])),
+    );
+    const reusable = rows.filter((r) => !hubbedIds.has(r._id));
+    const target = reusable[reusable.length - 1];
+
+    let connectionId: Id<"googleConnections">;
+    if (target !== undefined) {
+      // No hub depends on this row — switching accounts on it is harmless.
+      await ctx.db.patch(target._id, {
+        ...fresh,
+        refreshToken: args.refreshToken ?? target.refreshToken,
+      });
+      connectionId = target._id;
+    } else {
+      connectionId = await ctx.db.insert("googleConnections", {
+        userId: args.userId,
+        googleUserId: args.googleUserId,
+        email: args.email,
+        accessToken: args.accessToken,
+        refreshToken: args.refreshToken,
+        expiresAt: args.expiresAt,
+        scopes: args.scopes,
+      });
+    }
+
+    // Say it out loud on every production that stayed behind: silence here is
+    // exactly how a studio ends up believing its files are safe.
+    const actor = await actorName(ctx, args.userId);
+    for (const production of hubbed) {
+      if (production.hub === undefined) continue;
+      const owner = await ctx.db.get(production.hub.connectionId);
+      const ownerEmail = owner?.email ?? "another Google account";
+      await logActivity(ctx, {
+        productionId: production._id,
+        actorId: args.userId,
+        type: "drive.hub_owner_mismatch",
+        targetType: "production",
+        targetId: production._id,
+        summary: `${actor} connected Google account ${args.email}, but this Drive hub was created by ${ownerEmail} — hub writes and sync keep using ${ownerEmail}`,
+      });
+      await notify(ctx, {
+        userId: args.userId,
+        productionId: production._id,
+        type: "drive.hub_owner_mismatch",
+        title: "Drive hub belongs to a different Google account",
+        body: `You connected ${args.email}, but the Drive hub for ${production.name} was created by ${ownerEmail}. Google only lets Kinolab see files it created for that account, so the hub still runs on ${ownerEmail} — reconnect with that account to keep uploads and sync working.`,
+        href: `/p/${production._id}/settings`,
+      });
+    }
+    return connectionId;
   },
 });
 

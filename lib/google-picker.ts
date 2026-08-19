@@ -47,46 +47,113 @@ declare global {
   }
 }
 
+/**
+ * apis.google.com can never answer at all — ad blocker, corporate proxy,
+ * offline, or (for this studio) Google being unreachable from the network.
+ * Neither onload nor onerror fires then, so without a deadline the promise
+ * never settles and the caller's spinner latches for the whole session.
+ */
+const SCRIPT_TIMEOUT_MS = 15_000;
+const SCRIPT_ID = "google-api-js";
+const SCRIPT_SRC = "https://apis.google.com/js/api.js";
+
+/** Shown to the user, so it must say what to do — not "load failed". */
+const UNREACHABLE =
+  "Couldn't reach Google — check the connection (or a blocker/extension) and try again";
+const NOT_LOADED = "Google Picker didn't load — try again";
+
 let loadPromise: Promise<PickerNamespace> | null = null;
 
 function loadPickerApi(): Promise<PickerNamespace> {
   if (loadPromise) return loadPromise;
-  loadPromise = new Promise((resolve, reject) => {
+  const attempt = new Promise<PickerNamespace>((resolve, reject) => {
+    let settled = false;
+    const timer = window.setTimeout(
+      () => fail(new Error(UNREACHABLE)),
+      SCRIPT_TIMEOUT_MS,
+    );
+    const done = (ns: PickerNamespace) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve(ns);
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      reject(error);
+    };
     const ready = () => {
-      window.gapi!.load("picker", () => {
-        const ns = window.google?.picker;
-        if (ns) resolve(ns);
-        else reject(new Error("Google Picker failed to load"));
-      });
+      const gapi = window.gapi;
+      // Script tag fired load but gapi is absent — treat as unreachable
+      // rather than throwing out of an event handler.
+      if (!gapi) {
+        fail(new Error(UNREACHABLE));
+        return;
+      }
+      try {
+        gapi.load("picker", () => {
+          const ns = window.google?.picker;
+          if (ns) done(ns);
+          else fail(new Error(NOT_LOADED));
+        });
+      } catch {
+        fail(new Error(NOT_LOADED));
+      }
     };
     if (window.gapi) {
       ready();
       return;
     }
-    const script = document.createElement("script");
-    script.src = "https://apis.google.com/js/api.js";
-    script.async = true;
-    script.onload = ready;
-    script.onerror = () => {
-      loadPromise = null;
-      reject(new Error("Could not load Google APIs script"));
-    };
-    document.head.appendChild(script);
+    // Reuse the tag from an earlier attempt: a script that timed out may still
+    // be in flight, and a second <script> would only race it.
+    const existing = document.getElementById(SCRIPT_ID);
+    const script =
+      existing instanceof HTMLScriptElement
+        ? existing
+        : document.createElement("script");
+    script.addEventListener("load", ready, { once: true });
+    script.addEventListener("error", () => fail(new Error(UNREACHABLE)), {
+      once: true,
+    });
+    if (script !== existing) {
+      script.id = SCRIPT_ID;
+      script.src = SCRIPT_SRC;
+      script.async = true;
+      document.head.appendChild(script);
+    }
   });
-  return loadPromise;
+  // Cache successes only. A cached rejection (or a cached promise that never
+  // settled) would kill "Attach from Drive" and "Pick a folder…" for the rest
+  // of the session; dropping it lets the next click start over.
+  loadPromise = attempt;
+  void attempt.catch(() => {
+    if (loadPromise === attempt) loadPromise = null;
+  });
+  return attempt;
 }
 
 /**
  * Opens the Picker; resolves with picked files, or null when cancelled.
  * foldersOnly=true switches to folder-select mode (used to choose the Hub
  * parent). Multi-select is on for files, off for folders.
+ * Rejects with a user-readable message when Google can't be loaded — callers
+ * surface it as a toast and stay clickable.
  */
 export async function openDrivePicker(
   config: PickerConfig,
   opts: { foldersOnly?: boolean } = {},
 ): Promise<PickedFile[] | null> {
   const picker = await loadPickerApi();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    // The Picker may call back more than once (e.g. "loaded" then "cancel").
+    const finish = (result: PickedFile[] | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
     const view = new picker.DocsView(
       opts.foldersOnly ? picker.ViewId.FOLDERS : picker.ViewId.DOCS,
     );
@@ -103,24 +170,32 @@ export async function openDrivePicker(
       .setCallback((data) => {
         const action = data[picker.Response.ACTION];
         if (action === picker.Action.PICKED) {
-          const docs = data[picker.Response.DOCUMENTS] as Record<
-            string,
-            string
-          >[];
-          resolve(
-            docs.map((d) => ({
-              id: d[picker.Document.ID],
-              name: d[picker.Document.NAME],
-              mimeType: d[picker.Document.MIME_TYPE],
-            })),
+          const docs =
+            (data[picker.Response.DOCUMENTS] as
+              | Record<string, string>[]
+              | undefined) ?? [];
+          finish(
+            docs
+              .filter((d) => typeof d[picker.Document.ID] === "string")
+              .map((d) => ({
+                id: d[picker.Document.ID],
+                name: d[picker.Document.NAME] ?? "Untitled",
+                mimeType: d[picker.Document.MIME_TYPE],
+              })),
           );
         } else if (action === picker.Action.CANCEL) {
-          resolve(null);
+          // Closed without choosing — a normal outcome, not an error.
+          finish(null);
         }
       });
     if (config.apiKey) builder = builder.setDeveloperKey(config.apiKey);
     if (!opts.foldersOnly)
       builder = builder.enableFeature(picker.Feature.MULTISELECT_ENABLED);
-    builder.build().setVisible(true);
+    try {
+      builder.build().setVisible(true);
+    } catch (e) {
+      // A bad token/appId throws here; without this the promise would hang.
+      reject(e instanceof Error ? e : new Error(NOT_LOADED));
+    }
   });
 }
